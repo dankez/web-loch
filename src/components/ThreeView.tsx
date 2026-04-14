@@ -142,6 +142,13 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
     // SPLAY Rendering & Volume Grouping
     const stationSplayMap = new Map<number, THREE.Vector3[]>(); // stationId -> array of splay endpoint vectors
 
+    // Vytvorenie setu povrchových staníc na vylúčenie ich splay bodov z tvorenia 3D stien
+    const surfaceStationIds = new Set<number>();
+    data.surfaceLegs.forEach(leg => {
+       surfaceStationIds.add(leg.from);
+       if (leg.to !== -1) surfaceStationIds.add(leg.to);
+    });
+
     data.splays.forEach(splay => {
       const p1 = data.stations.get(splay.from)?.pos;
       const p2 = data.stations.get(splay.to)?.pos;
@@ -165,11 +172,39 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
           line.computeLineDistances();
           splaysGroup.current.add(line);
 
-          // Zbieranie bodov pre convex hull: K stanici ukladáme všetky koncové body jej splays
-          if (!stationSplayMap.has(splay.from)) {
-              stationSplayMap.set(splay.from, [v1]); // pridať aj stred stanice ako základ
+          // Zbieranie bodov pre convex hull, NEPRIDAŤ pre povrchové stanice
+          if (!surfaceStationIds.has(splay.from)) {
+              if (!stationSplayMap.has(splay.from)) {
+                  stationSplayMap.set(splay.from, [v1]); // pridať aj stred stanice ako základ
+              }
+              stationSplayMap.get(splay.from)?.push(v2);
           }
-          stationSplayMap.get(splay.from)?.push(v2);
+      }
+    });
+
+    // SURFACE Rendering
+    data.surfaceLegs.forEach(leg => {
+      const p1 = data.stations.get(leg.from)?.pos;
+      const p2 = data.stations.get(leg.to)?.pos;
+      if (p1 && p2) {
+        const v1 = p1.clone().sub(offset);
+        const v2 = p2.clone().sub(offset);
+
+        box.expandByPoint(v1);
+        box.expandByPoint(v2);
+
+        const geom = new LineGeometry();
+        geom.setPositions([v1.x, v1.y, v1.z, v2.x, v2.y, v2.z]);
+
+        const mat = new LineMaterial({
+            color: 0xffffff, // Biela fixná farba pre povrch
+            linewidth: centerlineWidth,
+            resolution: new THREE.Vector2(window.innerWidth, window.innerHeight)
+        });
+
+        const line = new Line2(geom, mat);
+        line.computeLineDistances();
+        legsGroup.current.add(line); // Pre teraz vložíme surface do legsGroup aby sa zapínali spoločne
       }
     });
 

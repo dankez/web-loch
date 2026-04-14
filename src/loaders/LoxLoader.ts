@@ -3,8 +3,9 @@ import * as THREE from 'three';
 
 export interface LoxData {
   stations: Map<number, { name: string, pos: THREE.Vector3, surveyId: number }>;
-  legs: { from: number, to: number, surveyId: number, flags: number }[];
-  splays: { from: number, to: number, surveyId: number, flags: number }[]; // to is often -1
+  legs: { from: number, to: number, surveyId: number, flags: number, isSurface?: boolean }[];
+  splays: { from: number, to: number, surveyId: number, flags: number, isSurface?: boolean }[]; // to is often -1
+  surfaceLegs: { from: number, to: number, surveyId: number, flags: number, isSurface?: boolean }[];
   surveys: Map<number, { name: string, parentId: number }>;
   metadata: {
     name: string;
@@ -28,6 +29,7 @@ export class LoxLoader {
       stations: new Map(),
       legs: [],
       splays: [],
+      surfaceLegs: [],
       surveys: new Map(),
       metadata: { name: 'Cave Project', totalLength: 0, maxDepth: 0, numStations: 0 }
     };
@@ -87,6 +89,10 @@ export class LoxLoader {
             const surveyId = view.getUint32(rOff + 8, true);
             const flags = view.getUint32(rOff + 80, true);
 
+            // Flag at offset 72 indicates if it is a surface shot (1 = surface, 0 = underground)
+            const surfaceFlag = view.getUint32(rOff + 72, true);
+            const isSurfaceReal = surfaceFlag === 1;
+
             // In Lox format, often stations named "." are splays endpoint.
             // We can detect them later. For now, rely on to being valid, but check station names.
             const isSplayFlag = (flags & 16) !== 0 || to === -1;
@@ -94,7 +100,7 @@ export class LoxLoader {
             const isSurface = (flags & 1) !== 0;
 
             // We will separate splays after loading stations by name check.
-            data.legs.push({ from, to, surveyId, flags });
+            data.legs.push({ from, to, surveyId, flags, isSurface: isSurfaceReal });
           }
           break;
       }
@@ -104,12 +110,12 @@ export class LoxLoader {
     // Post-process legs to extract splays based on station names
     const realLegs: typeof data.legs = [];
     const splays: typeof data.splays = [];
+    const surfaceLegs: typeof data.surfaceLegs = [];
 
     data.legs.forEach(leg => {
       const toStation = data.stations.get(leg.to);
       const isSplayFlag = (leg.flags & 16) !== 0 || leg.to === -1;
       const isDuplicate = (leg.flags & 2) !== 0;
-      const isSurface = (leg.flags & 1) !== 0;
 
       const toName = toStation ? toStation.name : '';
       // Ak meno neobsahuje žiadne alfanumerické znaky (napr. ".", ",", "", atď.), je to splay.
@@ -117,35 +123,48 @@ export class LoxLoader {
       const hasAlphaNum = /[a-zA-Z0-9]/.test(toName);
       const isNameSplay = !hasAlphaNum;
 
-      // Centerline (polygon): Ak názov koncového bodu obsahuje alfanumerické znaky
-      // Splay: Ak názov koncového bodu neobsahuje alfanumerické znaky (je to dead end so znakom, alebo prázdny)
-      if (isSplayFlag || isNameSplay || !toStation) {
+      if (leg.isSurface) {
+        surfaceLegs.push(leg);
+      } else if (isSplayFlag || isNameSplay || !toStation) {
         splays.push(leg);
-      } else if (!isDuplicate) { // isSurface is flag 1, which Therion sets on normal shots often
+      } else if (!isDuplicate) {
         realLegs.push(leg);
       }
     });
 
     data.legs = realLegs;
     data.splays = splays;
+    data.surfaceLegs = surfaceLegs;
 
-    // Metadata calc
+    // Build a set of surface station IDs
+    const surfaceStationIds = new Set<number>();
+    data.surfaceLegs.forEach(leg => {
+       surfaceStationIds.add(leg.from);
+       if (leg.to !== -1) surfaceStationIds.add(leg.to);
+    });
+
+    // Metadata calc (exclude surface stations and splays)
     let minZ = Infinity, maxZ = -Infinity;
-    data.stations.forEach(s => {
+    data.stations.forEach((s, id) => {
       const hasAlphaNum = /[a-zA-Z0-9]/.test(s.name);
       const isNameSplay = !hasAlphaNum;
+      const isSurfaceNode = surfaceStationIds.has(id);
 
-      if (!isNameSplay) {
+      if (!isNameSplay && !isSurfaceNode) {
          if (s.pos.z < minZ) minZ = s.pos.z;
          if (s.pos.z > maxZ) maxZ = s.pos.z;
       }
     });
     data.metadata.maxDepth = (maxZ === -Infinity) ? 0 : (maxZ - minZ);
-    data.metadata.numStations = data.stations.size;
+    data.metadata.numStations = data.stations.size; // Keep raw station count for now
+
+    // Length calc (only count underground real legs)
     data.legs.forEach(leg => {
       const p1 = data.stations.get(leg.from)?.pos;
       const p2 = data.stations.get(leg.to)?.pos;
-      if (p1 && p2) data.metadata.totalLength += p1.distanceTo(p2);
+      if (p1 && p2 && !leg.isSurface) {
+          data.metadata.totalLength += p1.distanceTo(p2);
+      }
     });
 
     return data;
