@@ -8,10 +8,27 @@ export interface HUDStats {
   azimuth: number;
   inclination: number;
   depth: number | null;
+  minZ?: number;
+  maxZ?: number;
 }
 
-export const HUD = ({ stats }: { stats: HUDStats }) => {
+export const HUD = ({ stats, fileName }: { stats: HUDStats, fileName: string | null }) => {
+  // Generates 6 evenly spaced labels between minZ and maxZ
+  const getAltitudeLabels = () => {
+      if (stats.minZ === undefined || stats.maxZ === undefined) return [];
+      const step = (stats.maxZ - stats.minZ) / 5;
+      const labels = [];
+      for (let i = 0; i <= 5; i++) {
+          labels.push((stats.maxZ - step * i).toFixed(0) + ' m');
+      }
+      return labels;
+  };
+
+  const altitudeLabels = getAltitudeLabels();
+
   return (
+    <>
+    {/* Right HUD - Stats */}
     <div style={{
       position: 'absolute',
       bottom: '20px',
@@ -25,7 +42,6 @@ export const HUD = ({ stats }: { stats: HUDStats }) => {
       border: '1px solid #444',
       pointerEvents: 'none',
       zIndex: 1000,
-      maxWidth: 'calc(100vw - 40px)',
       boxShadow: '0 4px 15px rgba(0,0,0,0.5)'
     }}>
       <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
@@ -49,5 +65,48 @@ export const HUD = ({ stats }: { stats: HUDStats }) => {
         </div>
       </div>
     </div>
+
+    {/* Left HUD - Modern Indicators & Altitude Legend */}
+    <div style={{
+      position: 'absolute',
+      bottom: '20px',
+      left: '320px', // Right next to the sidebar (300px width + 20px margin)
+      pointerEvents: 'none',
+      zIndex: 1000,
+      color: '#00ffff',
+      fontFamily: 'monospace',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '15px'
+    }}>
+      {/* Altitude Legend */}
+      {(stats.minZ !== undefined && stats.maxZ !== undefined) && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <div style={{ fontSize: '14px', marginBottom: '4px' }}>Altitude</div>
+            <div style={{ display: 'flex', height: '150px' }}>
+                {/* Gradient bar (Red on top, Blue on bottom to match HSL 0 to 0.6) */}
+                <div style={{
+                    width: '20px',
+                    height: '100%',
+                    background: 'linear-gradient(to bottom, hsl(0, 100%, 50%), hsl(60, 100%, 50%), hsl(120, 100%, 50%), hsl(180, 100%, 50%), hsl(240, 100%, 50%))',
+                    marginRight: '8px'
+                }}></div>
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', color: '#00ffff', fontSize: '12px' }}>
+                    {altitudeLabels.map((label, i) => (
+                       <span key={i} style={{ transform: i === 0 ? 'translateY(-50%)' : i === 5 ? 'translateY(50%)' : 'translateY(0)' }}>
+                         - {label}
+                       </span>
+                    ))}
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* Title */}
+      <div style={{ fontSize: '24px', fontWeight: 'bold', letterSpacing: '1px', textShadow: '1px 1px 2px #000' }}>
+         {fileName?.replace('.lox', '') || 'Loch Model'}
+      </div>
+    </div>
+    </>
   );
 };

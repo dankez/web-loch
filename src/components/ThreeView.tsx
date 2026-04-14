@@ -92,6 +92,13 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
     if (!firstPos) return;
     const offset = (firstPos as THREE.Vector3).clone();
 
+    // Update Stats with altitude
+    onUpdateStats({
+      cursorX: 0, cursorY: 0, cursorZ: 0, dist: 0, azimuth: 0, inclination: 0, depth: null,
+      minZ: minZ !== Infinity ? minZ : 0,
+      maxZ: maxZ !== -Infinity ? maxZ : 0
+    });
+
     // BoxHelper creation
     const box = new THREE.Box3();
     // Expand box by ALL stations so splays are also within the bounding box
