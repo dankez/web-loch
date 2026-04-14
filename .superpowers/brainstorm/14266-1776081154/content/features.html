@@ -1,0 +1,72 @@
+<h2>Loch Web 2.0 - Analytické nástroje</h2>
+<p class="subtitle">Návrh implementácie meracieho nástroja a proximity k povrchu.</p>
+
+<div class="mockup" style="height: 400px; position: relative; background: #111;">
+  <!-- Sidebar (Classic) -->
+  <div style="position: absolute; left: 0; top: 0; bottom: 0; width: 200px; background: #222; border-right: 1px solid #444; padding: 10px; font-family: monospace; font-size: 12px; color: #aaa;">
+    <div style="color: #fff; font-weight: bold; margin-bottom: 10px;">洞 CAVE TREE</div>
+    <div>▼ Jaskyňa mŕtvych netopierov</div>
+    <div style="padding-left: 15px;">▼ Vstupná chodba</div>
+    <div style="padding-left: 30px; color: #4CAF50;">● Stanica 1.1</div>
+    <div style="padding-left: 30px;">● Stanica 1.2</div>
+    <div style="margin-top: 20px; border-top: 1px solid #444; padding-top: 10px;">
+      <div style="color: #fff; font-weight: bold; margin-bottom: 5px;">TOOLS</div>
+      <div style="background: #333; padding: 5px; margin-bottom: 5px; border-radius: 3px; color: #fff;">📏 Virtual Leg (ON)</div>
+      <div style="background: #222; padding: 5px; margin-bottom: 5px; border-radius: 3px; border: 1px solid #444;">⛰️ Surface Proximity</div>
+    </div>
+  </div>
+
+  <!-- Main 3D View -->
+  <div style="margin-left: 200px; height: 100%; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden;">
+    
+    <!-- 3D Cave Model (Simplified) -->
+    <svg width="100%" height="100%" viewBox="0 0 400 300" style="background: #000;">
+      <!-- Surface Mesh (LiDAR) -->
+      <path d="M 0 50 Q 100 30 200 60 T 400 40" fill="none" stroke="#555" stroke-dasharray="4" />
+      <text x="320" y="30" fill="#555" font-size="10">Surface (LiDAR)</text>
+
+      <!-- Cave Tunnel -->
+      <path d="M 50 250 L 150 220 L 250 240 L 350 210" fill="none" stroke="#3d6cb9" stroke-width="20" opacity="0.4" />
+      <path d="M 50 250 L 150 220 L 250 240 L 350 210" fill="none" stroke="#fff" stroke-width="2" />
+      
+      <!-- Virtual Leg (Feature 1) -->
+      <line x1="150" y1="220" x2="350" y2="210" stroke="#f44336" stroke-width="2" stroke-dasharray="5" />
+      <circle cx="150" cy="220" r="4" fill="#f44336" />
+      <circle cx="350" cy="210" r="4" fill="#f44336" />
+      
+      <!-- Measurement Tooltip -->
+      <rect x="220" y="170" width="100" height="35" rx="5" fill="rgba(244, 67, 54, 0.9)" />
+      <text x="225" y="182" fill="#fff" font-size="9" font-weight="bold">Dist: 42.15m</text>
+      <text x="225" y="192" fill="#fff" font-size="8">Az: 87.2° | Incl: -2.8°</text>
+
+      <!-- LiDAR Proximity (Feature 2) -->
+      <line x1="250" y1="240" x2="250" y2="55" stroke="#4CAF50" stroke-width="1" stroke-dasharray="2" />
+      <rect x="255" y="140" width="80" height="20" rx="3" fill="rgba(76, 175, 80, 0.9)" />
+      <text x="260" y="153" fill="#fff" font-size="9" font-weight="bold">Depth: 18.5m</text>
+    </svg>
+
+    <!-- UI Overlay (HUD) -->
+    <div style="position: absolute; bottom: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 5px; color: #fff; font-size: 11px; border: 1px solid #444;">
+      <div>CURSOR: X: 125.4, Y: -42.1, Z: 512.3</div>
+      <div style="color: #4CAF50;">NEAREST SURFACE: 18.52m</div>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>Výhody tohto riešenia</h4>
+    <ul>
+      <li><strong>Raycasting:</strong> Presný výber bodov v 3D scéne.</li>
+      <li><strong>Reálny čas:</strong> Výpočty prebiehajú okamžite pri pohybe myšou.</li>
+      <li><strong>Vizuálna spätná väzba:</strong> Čiary a tooltipy priamo v scéne zvyšujú prehľadnosť.</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>Technické výzvy</h4>
+    <ul>
+      <li><strong>LiDAR spracovanie:</strong> Pri veľkých mračnách bodov (milióny bodov) bude nevyhnutné použiť Octree indexáciu.</li>
+      <li><strong>Výkon prehliadača:</strong> Bude dôležité optimalizovať počet polygónov pre povrchový mesh.</li>
+    </ul>
+  </div>
+</div>
