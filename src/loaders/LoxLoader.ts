@@ -22,6 +22,7 @@ export class LoxLoader {
   }
 
   async load(buffer: ArrayBuffer): Promise<LoxData> {
+    this.logCallback(`Loading LOX from buffer, size: ${buffer.byteLength} bytes`);
     const view = new DataView(buffer);
     const data: LoxData = {
       stations: new Map(),
@@ -86,27 +87,48 @@ export class LoxLoader {
             const surveyId = view.getUint32(rOff + 8, true);
             const flags = view.getUint32(rOff + 80, true);
 
-            const isSplay = (flags & 16) !== 0 || to === -1;
+            // In Lox format, often stations named "." are splays endpoint.
+            // We can detect them later. For now, rely on to being valid, but check station names.
+            const isSplayFlag = (flags & 16) !== 0 || to === -1;
             const isDuplicate = (flags & 2) !== 0;
             const isSurface = (flags & 1) !== 0;
 
-            if (isSplay) {
-              data.splays.push({ from, to, surveyId, flags });
-            } else if (!isDuplicate && !isSurface) {
-              data.legs.push({ from, to, surveyId, flags });
-            }
+            // We will separate splays after loading stations by name check.
+            data.legs.push({ from, to, surveyId, flags });
           }
           break;
       }
       offset = nextChunkOffset;
     }
 
+    // Post-process legs to extract splays based on station names
+    const realLegs: typeof data.legs = [];
+    const splays: typeof data.splays = [];
+
+    data.legs.forEach(leg => {
+      const toStation = data.stations.get(leg.to);
+      const isSplayFlag = (leg.flags & 16) !== 0 || leg.to === -1;
+      const isDuplicate = (leg.flags & 2) !== 0;
+      const isSurface = (leg.flags & 1) !== 0;
+
+      if (isSplayFlag || (toStation && toStation.name === '.')) {
+        splays.push(leg);
+      } else if (!isDuplicate && !isSurface) {
+        realLegs.push(leg);
+      }
+    });
+
+    data.legs = realLegs;
+    data.splays = splays;
+
     // Metadata calc
     let minZ = Infinity, maxZ = -Infinity;
     data.stations.forEach(s => {
-      if (s.pos.z < minZ) minZ = s.pos.z;
-      if (s.pos.z > maxZ) maxZ = s.pos.z;
-      const p1 = data.stations.get(s.surveyId)?.pos; // dummy
+      // Ignore splay endpoints for cave bounding box usually, but we keep it simple here
+      if (s.name !== '.') {
+         if (s.pos.z < minZ) minZ = s.pos.z;
+         if (s.pos.z > maxZ) maxZ = s.pos.z;
+      }
     });
     data.metadata.maxDepth = (maxZ === -Infinity) ? 0 : (maxZ - minZ);
     data.metadata.numStations = data.stations.size;

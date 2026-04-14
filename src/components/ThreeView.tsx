@@ -66,26 +66,29 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
       });
 
       // SPLAY Rendering (Dimmed color)
+      // Splays are lines from station to splay point
+      const splayMaterial = new THREE.LineBasicMaterial({ color: 0x555555, transparent: true, opacity: 0.4 });
       data.splays.forEach(splay => {
         const p1 = data.stations.get(splay.from)?.pos;
-        const p2 = splay.to !== -1 ? data.stations.get(splay.to)?.pos : null; // Rarely splays have to-station
+        const p2 = data.stations.get(splay.to)?.pos;
 
-        if (p1) {
-          // If no to-station, splays are often stored as special points in other chunks.
-          // For this basic parser, we show splays between known stations if available.
-          if (p2) {
-            const geom = new THREE.BufferGeometry().setFromPoints([p1.clone().sub(offset), p2.clone().sub(offset)]);
-            const line = new THREE.Line(geom, new THREE.LineBasicMaterial({ color: 0x444444, transparent: true, opacity: 0.5 }));
+        if (p1 && p2) {
+            const v1 = p1.clone().sub(offset);
+            const v2 = p2.clone().sub(offset);
+            const geom = new THREE.BufferGeometry().setFromPoints([v1, v2]);
+            const line = new THREE.Line(geom, splayMaterial);
             splaysGroup.current.add(line);
-          }
         }
       });
 
       // STATION Rendering
       const stationPoints: THREE.Vector3[] = [];
-      data.stations.forEach(s => stationPoints.push(s.pos.clone().sub(offset)));
+      data.stations.forEach(s => {
+         // Optionally, render splay endpoints differently, but let's render all.
+         stationPoints.push(s.pos.clone().sub(offset));
+      });
       const pointsGeom = new THREE.BufferGeometry().setFromPoints(stationPoints);
-      const pointsCloud = new THREE.Points(pointsGeom, new THREE.PointsMaterial({ color: 0xffffff, size: 0.2 }));
+      const pointsCloud = new THREE.Points(pointsGeom, new THREE.PointsMaterial({ color: 0xffff00, size: 0.2 })); // yellow as in Therion image
       stationsGroup.current.add(pointsCloud);
 
       if (controlsRef.current) {
