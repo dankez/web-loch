@@ -6,6 +6,8 @@ import { LoxData } from '../loaders/LoxLoader';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
 
@@ -22,6 +24,7 @@ interface ThreeViewProps {
   splayWidth: number;
   bgColor: string;
   fontSize: number;
+  wallsVisible: boolean;
 }
 
 export interface ThreeViewHandle {
@@ -57,7 +60,7 @@ const createTextSprite = (text: string, sizeMultiplier: number) => {
 
 export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
   onUpdateStats, surfaceVisible, legsVisible, splaysVisible, stationsVisible,
-  labelsVisible, altitudeColor, boundingBoxVisible, centerlineWidth, splayWidth, bgColor, fontSize
+  labelsVisible, altitudeColor, boundingBoxVisible, centerlineWidth, splayWidth, bgColor, fontSize, wallsVisible
 }, ref) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene>(new THREE.Scene());
@@ -67,6 +70,7 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
   const splaysGroup = useRef<THREE.Group>(new THREE.Group());
   const stationsGroup = useRef<THREE.Group>(new THREE.Group());
   const labelsGroup = useRef<THREE.Group>(new THREE.Group());
+  const wallsGroup = useRef<THREE.Group>(new THREE.Group());
   const boxHelperRef = useRef<THREE.Box3Helper | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
 
@@ -135,7 +139,9 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
       }
     });
 
-    // SPLAY Rendering
+    // SPLAY Rendering & Volume Grouping
+    const stationSplayMap = new Map<number, THREE.Vector3[]>(); // stationId -> array of splay endpoint vectors
+
     data.splays.forEach(splay => {
       const p1 = data.stations.get(splay.from)?.pos;
       const p2 = data.stations.get(splay.to)?.pos;
@@ -158,8 +164,43 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
           const line = new Line2(geom, splayMaterial);
           line.computeLineDistances();
           splaysGroup.current.add(line);
+
+          // Zbieranie bodov pre convex hull: K stanici ukladáme všetky koncové body jej splays
+          if (!stationSplayMap.has(splay.from)) {
+              stationSplayMap.set(splay.from, [v1]); // pridať aj stred stanice ako základ
+          }
+          stationSplayMap.get(splay.from)?.push(v2);
       }
     });
+
+    // Vytvorenie obalu 3D jaskyne (Walls / Convex Hulls)
+    const hullGeometries: THREE.BufferGeometry[] = [];
+    stationSplayMap.forEach((points, stationId) => {
+        // Konvexný obal má zmysel generovať iba ak má stanica aspoň 4 body pre vytvorenie priestorového objemu
+        if (points.length >= 4) {
+            try {
+                const convexGeom = new ConvexGeometry(points);
+                hullGeometries.push(convexGeom);
+            } catch (e) {
+                console.warn("Could not generate convex hull for station", stationId, e);
+            }
+        }
+    });
+
+    if (hullGeometries.length > 0) {
+        const mergedGeom = BufferGeometryUtils.mergeGeometries(hullGeometries, false);
+        if (mergedGeom) {
+            const wallMaterial = new THREE.MeshStandardMaterial({
+                color: 0x888888,
+                transparent: true,
+                opacity: 0.3,
+                roughness: 0.8,
+                side: THREE.DoubleSide
+            });
+            const wallsMesh = new THREE.Mesh(mergedGeom, wallMaterial);
+            wallsGroup.current.add(wallsMesh);
+        }
+    }
 
     // STATION Rendering & Labels
     const mainStationPoints: THREE.Vector3[] = [];
@@ -182,11 +223,11 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
     });
 
     const mainPointsGeom = new THREE.BufferGeometry().setFromPoints(mainStationPoints);
-    const mainPointsCloud = new THREE.Points(mainPointsGeom, new THREE.PointsMaterial({ color: 0xffff00, size: 0.2 }));
+    const mainPointsCloud = new THREE.Points(mainPointsGeom, new THREE.PointsMaterial({ color: 0xff0000, size: 0.2 })); // Cervena gulicka pre centerline stanice
     stationsGroup.current.add(mainPointsCloud);
 
     const splayPointsGeom = new THREE.BufferGeometry().setFromPoints(splayStationPoints);
-    const splayPointsCloud = new THREE.Points(splayPointsGeom, new THREE.PointsMaterial({ color: 0xffff00, size: 0.1 }));
+    const splayPointsCloud = new THREE.Points(splayPointsGeom, new THREE.PointsMaterial({ color: 0xffff00, size: 0.05 })); // Splay body 50% mensie z 0.1 na 0.05
     stationsGroup.current.add(splayPointsCloud);
 
     // Bounding Box
@@ -214,7 +255,7 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
   }));
 
   const clearCurrentData = () => {
-    [legsGroup, splaysGroup, stationsGroup, labelsGroup].forEach(g => {
+    [legsGroup, splaysGroup, stationsGroup, labelsGroup, wallsGroup].forEach(g => {
       while(g.current.children.length > 0) {
         const child = g.current.children[0] as any;
         if (child.geometry) child.geometry.dispose();
@@ -241,6 +282,13 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
     scene.add(splaysGroup.current);
     scene.add(stationsGroup.current);
     scene.add(labelsGroup.current);
+    scene.add(wallsGroup.current);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(0, -50, 100);
+    scene.add(dirLight);
 
     const camera = new THREE.PerspectiveCamera(75, mountRef.current.clientWidth / mountRef.current.clientHeight, 0.1, 10000);
     camera.position.set(20, -40, 20);
@@ -277,6 +325,7 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
   useEffect(() => { splaysGroup.current.visible = splaysVisible; }, [splaysVisible]);
   useEffect(() => { stationsGroup.current.visible = stationsVisible; }, [stationsVisible]);
   useEffect(() => { labelsGroup.current.visible = labelsVisible; }, [labelsVisible]);
+  useEffect(() => { wallsGroup.current.visible = wallsVisible; }, [wallsVisible]);
 
   useEffect(() => {
     if (boxHelperRef.current) {

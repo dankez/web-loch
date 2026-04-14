@@ -121,7 +121,7 @@ export class LoxLoader {
       // Splay: Ak názov koncového bodu neobsahuje alfanumerické znaky (je to dead end so znakom, alebo prázdny)
       if (isSplayFlag || isNameSplay || !toStation) {
         splays.push(leg);
-      } else if (!isDuplicate && !isSurface) {
+      } else if (!isDuplicate) { // isSurface is flag 1, which Therion sets on normal shots often
         realLegs.push(leg);
       }
     });

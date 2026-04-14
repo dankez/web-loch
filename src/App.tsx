@@ -26,7 +26,8 @@ function App() {
     stations: true,
     labels: false,
     altitudeColor: true,
-    boundingBox: false
+    boundingBox: false,
+    walls: false
   });
 
   const [settings, setSettings] = useState({
@@ -116,6 +117,9 @@ function App() {
             <button className={`btn ${vis.labels ? 'btn-active' : ''}`} onClick={() => setVis({...vis, labels: !vis.labels})}>
               {vis.labels ? '🏷️ Názvy staníc: ZAP' : '🏷️ Názvy staníc: VYP'}
             </button>
+            <button className={`btn ${vis.walls ? 'btn-active' : ''}`} onClick={() => setVis({...vis, walls: !vis.walls})}>
+              {vis.walls ? '🧱 3D Steny: ZAP' : '🧱 3D Steny: VYP'}
+            </button>
             <button className={`btn ${vis.altitudeColor ? 'btn-active' : ''}`} onClick={() => setVis({...vis, altitudeColor: !vis.altitudeColor})}>
               {vis.altitudeColor ? '🌈 Výškový gradient: ZAP' : '🌈 Výškový gradient: VYP'}
             </button>
@@ -165,6 +169,7 @@ function App() {
           labelsVisible={vis.labels}
           altitudeColor={vis.altitudeColor}
           boundingBoxVisible={vis.boundingBox}
+          wallsVisible={vis.walls}
           centerlineWidth={settings.centerlineWidth}
           splayWidth={settings.splayWidth}
           bgColor={settings.bgColor}
