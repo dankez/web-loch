@@ -23,7 +23,16 @@ function App() {
     surface: true,
     legs: true,
     splays: true,
-    stations: true
+    stations: true,
+    labels: false,
+    altitudeColor: true,
+    boundingBox: false
+  });
+
+  const [settings, setSettings] = useState({
+    centerlineWidth: 2,
+    splayWidth: 1,
+    bgColor: '#050505'
   });
 
   const [fileName, setFileName] = useState<string | null>(null);
@@ -86,33 +95,58 @@ function App() {
         <div className="sidebar-header"><h2><span>洞</span> Loch Web 2.0</h2></div>
         <div className="sidebar-content">
           <div className="info-panel">
-            <div className="info-label">CAVE INFO</div>
-            <div className="info-row"><span>Length:</span> <span>{fileInfo?.length.toFixed(2)} m</span></div>
-            <div className="info-row"><span>Depth:</span> <span>{fileInfo?.depth.toFixed(2)} m</span></div>
-            <div className="info-row"><span>Stations:</span> <span>{fileInfo?.stations}</span></div>
+            <div className="info-label">INFO O JASKYNI</div>
+            <div className="info-row"><span>Dĺžka:</span> <span>{fileInfo?.length.toFixed(2)} m</span></div>
+            <div className="info-row"><span>Hĺbka:</span> <span>{fileInfo?.depth.toFixed(2)} m</span></div>
+            <div className="info-row"><span>Stanice:</span> <span>{fileInfo?.stations}</span></div>
           </div>
 
-          <div style={{ color: '#888', fontSize: '11px', marginBottom: '10px', marginTop: '20px' }}>VISIBILITY</div>
+          <div style={{ color: '#888', fontSize: '11px', marginBottom: '10px', marginTop: '20px' }}>VIDITEĽNOSŤ A FUNKCIE</div>
           <div className="button-group">
             <button className={`btn ${vis.legs ? 'btn-active' : ''}`} onClick={() => setVis({...vis, legs: !vis.legs})}>
-              {vis.legs ? '🟢 Polygon: ON' : '⚫ Polygon: OFF'}
+              {vis.legs ? '🟢 Polygón: ZAP' : '⚫ Polygón: VYP'}
             </button>
             <button className={`btn ${vis.splays ? 'btn-active' : ''}`} onClick={() => setVis({...vis, splays: !vis.splays})}>
-              {vis.splays ? '🔘 Splays: ON' : '⚫ Splays: OFF'}
+              {vis.splays ? '🔘 Splays: ZAP' : '⚫ Splays: VYP'}
             </button>
             <button className={`btn ${vis.stations ? 'btn-active' : ''}`} onClick={() => setVis({...vis, stations: !vis.stations})}>
-              {vis.stations ? '⚪ Stations: ON' : '⚫ Stations: OFF'}
+              {vis.stations ? '⚪ Stanice: ZAP' : '⚫ Stanice: VYP'}
+            </button>
+            <button className={`btn ${vis.labels ? 'btn-active' : ''}`} onClick={() => setVis({...vis, labels: !vis.labels})}>
+              {vis.labels ? '🏷️ Názvy staníc: ZAP' : '🏷️ Názvy staníc: VYP'}
+            </button>
+            <button className={`btn ${vis.altitudeColor ? 'btn-active' : ''}`} onClick={() => setVis({...vis, altitudeColor: !vis.altitudeColor})}>
+              {vis.altitudeColor ? '🌈 Výškový gradient: ZAP' : '🌈 Výškový gradient: VYP'}
+            </button>
+            <button className={`btn ${vis.boundingBox ? 'btn-active' : ''}`} onClick={() => setVis({...vis, boundingBox: !vis.boundingBox})}>
+              {vis.boundingBox ? '📦 Bounding Box: ZAP' : '📦 Bounding Box: VYP'}
             </button>
             <button className={`btn ${vis.surface ? 'btn-active' : ''}`} onClick={() => setVis({...vis, surface: !vis.surface})}>
-              {vis.surface ? '⛰️ Surface: ON' : '🕳️ Surface: OFF'}
+              {vis.surface ? '⛰️ Povrch: ZAP' : '🕳️ Povrch: VYP'}
             </button>
+          </div>
+
+          <div style={{ color: '#888', fontSize: '11px', marginBottom: '10px', marginTop: '20px' }}>NASTAVENIA SCÉNY</div>
+          <div className="info-panel" style={{ padding: '10px' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '12px' }}>
+              Hrúbka Centerline: {settings.centerlineWidth}
+              <input type="range" min="1" max="10" step="1" value={settings.centerlineWidth} onChange={e => setSettings({...settings, centerlineWidth: parseFloat(e.target.value)})} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '12px', marginTop: '10px' }}>
+              Hrúbka Splays: {settings.splayWidth}
+              <input type="range" min="1" max="5" step="1" value={settings.splayWidth} onChange={e => setSettings({...settings, splayWidth: parseFloat(e.target.value)})} />
+            </label>
+            <label style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '12px', marginTop: '15px' }}>
+              Farba pozadia:
+              <input type="color" value={settings.bgColor} onChange={e => setSettings({...settings, bgColor: e.target.value})} style={{ background: 'none', border: 'none', cursor: 'pointer' }} />
+            </label>
           </div>
 
           <div className="log-container">
-            <div className="info-label">LOG</div>
+            <div className="info-label">LOG ZÁZNAMY</div>
             <div className="log-entries">{logs.map((log, i) => <div key={i} className="log-entry">{log}</div>)}</div>
           </div>
-          <button className="btn" onClick={() => setFileName(null)} style={{ marginTop: '10px', color: '#ff5252' }}>✖ Close</button>
+          <button className="btn" onClick={() => setFileName(null)} style={{ marginTop: '10px', color: '#ff5252' }}>✖ Zavrieť model</button>
         </div>
       </div>
       <div className="viewport">
@@ -123,6 +157,12 @@ function App() {
           legsVisible={vis.legs}
           splaysVisible={vis.splays}
           stationsVisible={vis.stations}
+          labelsVisible={vis.labels}
+          altitudeColor={vis.altitudeColor}
+          boundingBoxVisible={vis.boundingBox}
+          centerlineWidth={settings.centerlineWidth}
+          splayWidth={settings.splayWidth}
+          bgColor={settings.bgColor}
         />
         <HUD stats={stats} />
       </div>

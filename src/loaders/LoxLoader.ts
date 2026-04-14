@@ -111,7 +111,12 @@ export class LoxLoader {
       const isDuplicate = (leg.flags & 2) !== 0;
       const isSurface = (leg.flags & 1) !== 0;
 
-      if (isSplayFlag || (toStation && toStation.name === '.')) {
+      const toName = toStation ? toStation.name : '';
+      const isNameSplay = toName.includes('.') || toName.includes(',') || toName.includes('*');
+
+      // Centerline (polygon): Ak názov počiatočného aj koncového bodu obsahuje alfanumerické znaky
+      // Splay: Ak názov koncového bodu obsahuje špeciálny znak (. , *)
+      if (isSplayFlag || isNameSplay || !toStation) {
         splays.push(leg);
       } else if (!isDuplicate && !isSurface) {
         realLegs.push(leg);
@@ -124,8 +129,9 @@ export class LoxLoader {
     // Metadata calc
     let minZ = Infinity, maxZ = -Infinity;
     data.stations.forEach(s => {
-      // Ignore splay endpoints for cave bounding box usually, but we keep it simple here
-      if (s.name !== '.') {
+      // Ignore splay endpoints for cave bounding box usually
+      const isNameSplay = s.name.includes('.') || s.name.includes(',') || s.name.includes('*');
+      if (!isNameSplay) {
          if (s.pos.z < minZ) minZ = s.pos.z;
          if (s.pos.z > maxZ) maxZ = s.pos.z;
       }
