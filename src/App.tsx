@@ -32,7 +32,8 @@ function App() {
   const [settings, setSettings] = useState({
     centerlineWidth: 2,
     splayWidth: 1,
-    bgColor: '#050505'
+    bgColor: '#050505',
+    fontSize: 1
   });
 
   const [fileName, setFileName] = useState<string | null>(null);
@@ -136,6 +137,10 @@ function App() {
               Hrúbka Splays: {settings.splayWidth}
               <input type="range" min="1" max="5" step="1" value={settings.splayWidth} onChange={e => setSettings({...settings, splayWidth: parseFloat(e.target.value)})} />
             </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '12px', marginTop: '10px' }}>
+              Veľkosť textu: {settings.fontSize}
+              <input type="range" min="0.1" max="5" step="0.1" value={settings.fontSize} onChange={e => setSettings({...settings, fontSize: parseFloat(e.target.value)})} />
+            </label>
             <label style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '12px', marginTop: '15px' }}>
               Farba pozadia:
               <input type="color" value={settings.bgColor} onChange={e => setSettings({...settings, bgColor: e.target.value})} style={{ background: 'none', border: 'none', cursor: 'pointer' }} />
@@ -163,6 +168,7 @@ function App() {
           centerlineWidth={settings.centerlineWidth}
           splayWidth={settings.splayWidth}
           bgColor={settings.bgColor}
+          fontSize={settings.fontSize}
         />
         <HUD stats={stats} />
       </div>

@@ -112,10 +112,13 @@ export class LoxLoader {
       const isSurface = (leg.flags & 1) !== 0;
 
       const toName = toStation ? toStation.name : '';
-      const isNameSplay = toName.includes('.') || toName.includes(',') || toName.includes('*');
+      // Ak meno neobsahuje žiadne alfanumerické znaky (napr. ".", ",", "", atď.), je to splay.
+      // Slepý bod končiaci písmenom alebo číslom je polygón.
+      const hasAlphaNum = /[a-zA-Z0-9]/.test(toName);
+      const isNameSplay = !hasAlphaNum;
 
-      // Centerline (polygon): Ak názov počiatočného aj koncového bodu obsahuje alfanumerické znaky
-      // Splay: Ak názov koncového bodu obsahuje špeciálny znak (. , *)
+      // Centerline (polygon): Ak názov koncového bodu obsahuje alfanumerické znaky
+      // Splay: Ak názov koncového bodu neobsahuje alfanumerické znaky (je to dead end so znakom, alebo prázdny)
       if (isSplayFlag || isNameSplay || !toStation) {
         splays.push(leg);
       } else if (!isDuplicate && !isSurface) {
@@ -129,8 +132,9 @@ export class LoxLoader {
     // Metadata calc
     let minZ = Infinity, maxZ = -Infinity;
     data.stations.forEach(s => {
-      // Ignore splay endpoints for cave bounding box usually
-      const isNameSplay = s.name.includes('.') || s.name.includes(',') || s.name.includes('*');
+      const hasAlphaNum = /[a-zA-Z0-9]/.test(s.name);
+      const isNameSplay = !hasAlphaNum;
+
       if (!isNameSplay) {
          if (s.pos.z < minZ) minZ = s.pos.z;
          if (s.pos.z > maxZ) maxZ = s.pos.z;

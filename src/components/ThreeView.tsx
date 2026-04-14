@@ -21,6 +21,7 @@ interface ThreeViewProps {
   centerlineWidth: number;
   splayWidth: number;
   bgColor: string;
+  fontSize: number;
 }
 
 export interface ThreeViewHandle {
@@ -28,7 +29,7 @@ export interface ThreeViewHandle {
   clearScene: () => void;
 }
 
-const createTextSprite = (text: string) => {
+const createTextSprite = (text: string, sizeMultiplier: number) => {
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
   if (!context) return new THREE.Sprite();
@@ -50,13 +51,13 @@ const createTextSprite = (text: string) => {
   texture.minFilter = THREE.LinearFilter;
   const spriteMaterial = new THREE.SpriteMaterial({ map: texture, depthTest: false });
   const sprite = new THREE.Sprite(spriteMaterial);
-  sprite.scale.set(textWidth * 0.05, fontSize * 0.05, 1);
+  sprite.scale.set(textWidth * 0.05 * sizeMultiplier, fontSize * 0.05 * sizeMultiplier, 1);
   return sprite;
 };
 
 export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
   onUpdateStats, surfaceVisible, legsVisible, splaysVisible, stationsVisible,
-  labelsVisible, altitudeColor, boundingBoxVisible, centerlineWidth, splayWidth, bgColor
+  labelsVisible, altitudeColor, boundingBoxVisible, centerlineWidth, splayWidth, bgColor, fontSize
 }, ref) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene>(new THREE.Scene());
@@ -89,6 +90,10 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
 
     // BoxHelper creation
     const box = new THREE.Box3();
+    // Expand box by ALL stations so splays are also within the bounding box
+    data.stations.forEach(s => {
+        box.expandByPoint(s.pos.clone().sub(offset));
+    });
 
     // LEG Rendering
     data.legs.forEach(leg => {
@@ -98,26 +103,31 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
         const v1 = p1.clone().sub(offset);
         const v2 = p2.clone().sub(offset);
 
-        box.expandByPoint(v1);
-        box.expandByPoint(v2);
-
-        // Color mode
-        let color = new THREE.Color(0x00ff00);
-        if (altitudeColor) {
-            const avgZ = (p1.z + p2.z) / 2;
-            const t = (maxZ === minZ) ? 0 : (avgZ - minZ) / (maxZ - minZ);
-            color.setHSL(0.6 * (1 - t), 1, 0.5); // Blue to Red
-        }
-
         // Use Line2 for proper thickness support
         const geom = new LineGeometry();
         geom.setPositions([v1.x, v1.y, v1.z, v2.x, v2.y, v2.z]);
 
-        const mat = new LineMaterial({
-            color: color.getHex(),
+        // Color mode with gradient via Vertex Colors
+        const matOptions: any = {
             linewidth: centerlineWidth,
             resolution: new THREE.Vector2(window.innerWidth, window.innerHeight)
-        });
+        };
+
+        if (altitudeColor) {
+            const t1 = (maxZ === minZ) ? 0 : (p1.z - minZ) / (maxZ - minZ);
+            const color1 = new THREE.Color().setHSL(0.6 * (1 - t1), 1, 0.5);
+
+            const t2 = (maxZ === minZ) ? 0 : (p2.z - minZ) / (maxZ - minZ);
+            const color2 = new THREE.Color().setHSL(0.6 * (1 - t2), 1, 0.5);
+
+            geom.setColors([color1.r, color1.g, color1.b, color2.r, color2.g, color2.b]);
+            matOptions.vertexColors = true;
+            matOptions.color = 0xffffff;
+        } else {
+            matOptions.color = 0x00ff00;
+        }
+
+        const mat = new LineMaterial(matOptions);
 
         const line = new Line2(geom, mat);
         line.computeLineDistances();
@@ -152,21 +162,32 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
     });
 
     // STATION Rendering & Labels
-    const stationPoints: THREE.Vector3[] = [];
+    const mainStationPoints: THREE.Vector3[] = [];
+    const splayStationPoints: THREE.Vector3[] = [];
+
     data.stations.forEach(s => {
        const v = s.pos.clone().sub(offset);
-       stationPoints.push(v);
 
-       if (s.name !== '.') {
-           const sprite = createTextSprite(s.name);
+       const isNameSplay = !(/[a-zA-Z0-9]/.test(s.name));
+
+       if (!isNameSplay) {
+           mainStationPoints.push(v);
+           const sprite = createTextSprite(s.name, fontSize);
            sprite.position.copy(v);
            sprite.position.y += 0.2; // slight offset
            labelsGroup.current.add(sprite);
+       } else {
+           splayStationPoints.push(v);
        }
     });
-    const pointsGeom = new THREE.BufferGeometry().setFromPoints(stationPoints);
-    const pointsCloud = new THREE.Points(pointsGeom, new THREE.PointsMaterial({ color: 0xffff00, size: 0.2 }));
-    stationsGroup.current.add(pointsCloud);
+
+    const mainPointsGeom = new THREE.BufferGeometry().setFromPoints(mainStationPoints);
+    const mainPointsCloud = new THREE.Points(mainPointsGeom, new THREE.PointsMaterial({ color: 0xffff00, size: 0.2 }));
+    stationsGroup.current.add(mainPointsCloud);
+
+    const splayPointsGeom = new THREE.BufferGeometry().setFromPoints(splayStationPoints);
+    const splayPointsCloud = new THREE.Points(splayPointsGeom, new THREE.PointsMaterial({ color: 0xffff00, size: 0.1 }));
+    stationsGroup.current.add(splayPointsCloud);
 
     // Bounding Box
     if (boxHelperRef.current) {
@@ -275,7 +296,7 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
     if (loxDataRef.current) {
        buildScene(loxDataRef.current);
     }
-  }, [altitudeColor, centerlineWidth, splayWidth]);
+  }, [altitudeColor, centerlineWidth, splayWidth, fontSize]);
 
   return <div ref={mountRef} style={{ width: '100%', height: '100%' }} />;
 });
