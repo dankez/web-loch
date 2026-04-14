@@ -136,21 +136,40 @@ export class LoxLoader {
     data.splays = splays;
     data.surfaceLegs = surfaceLegs;
 
-    // Build a set of surface station IDs
+    // Build sets to classify stations
     const surfaceStationIds = new Set<number>();
+    const undergroundStationIds = new Set<number>();
+
     data.surfaceLegs.forEach(leg => {
        surfaceStationIds.add(leg.from);
        if (leg.to !== -1) surfaceStationIds.add(leg.to);
     });
+    data.legs.forEach(leg => {
+       undergroundStationIds.add(leg.from);
+       if (leg.to !== -1) undergroundStationIds.add(leg.to);
+    });
 
-    // Metadata calc (exclude surface stations and splays)
+    // Pure surface station: has surface legs, but NO underground legs
+    const pureSurfaceIds = new Set<number>();
+    surfaceStationIds.forEach(id => {
+       if (!undergroundStationIds.has(id)) pureSurfaceIds.add(id);
+    });
+
+    // Označíme pure surface stanice flagom aby sa dali filtrovať pri renderovaní stien
+    data.stations.forEach((s, id) => {
+        if (pureSurfaceIds.has(id)) {
+            (s as any).isPureSurface = true;
+        }
+    });
+
+    // Metadata calc (exclude PURE surface stations and splays)
     let minZ = Infinity, maxZ = -Infinity;
     data.stations.forEach((s, id) => {
       const hasAlphaNum = /[a-zA-Z0-9]/.test(s.name);
       const isNameSplay = !hasAlphaNum;
-      const isSurfaceNode = surfaceStationIds.has(id);
+      const isPureSurfaceNode = pureSurfaceIds.has(id);
 
-      if (!isNameSplay && !isSurfaceNode) {
+      if (!isNameSplay && !isPureSurfaceNode) {
          if (s.pos.z < minZ) minZ = s.pos.z;
          if (s.pos.z > maxZ) maxZ = s.pos.z;
       }

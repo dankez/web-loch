@@ -142,15 +142,9 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
     // SPLAY Rendering & Volume Grouping
     const stationSplayMap = new Map<number, THREE.Vector3[]>(); // stationId -> array of splay endpoint vectors
 
-    // Vytvorenie setu povrchových staníc na vylúčenie ich splay bodov z tvorenia 3D stien
-    const surfaceStationIds = new Set<number>();
-    data.surfaceLegs.forEach(leg => {
-       surfaceStationIds.add(leg.from);
-       if (leg.to !== -1) surfaceStationIds.add(leg.to);
-    });
-
     data.splays.forEach(splay => {
-      const p1 = data.stations.get(splay.from)?.pos;
+      const station = data.stations.get(splay.from);
+      const p1 = station?.pos;
       const p2 = data.stations.get(splay.to)?.pos;
 
       if (p1 && p2) {
@@ -172,8 +166,9 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
           line.computeLineDistances();
           splaysGroup.current.add(line);
 
-          // Zbieranie bodov pre convex hull, NEPRIDAŤ pre povrchové stanice
-          if (!surfaceStationIds.has(splay.from)) {
+          // Zbieranie bodov pre convex hull, NEPRIDAŤ pre PURE povrchové stanice
+          // Ak je stanica súčasťou jaskyne aj povrchu (zlomový bod), jej steny sa vygenerujú
+          if (!(station as any)?.isPureSurface) {
               if (!stationSplayMap.has(splay.from)) {
                   stationSplayMap.set(splay.from, [v1]); // pridať aj stred stanice ako základ
               }
