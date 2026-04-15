@@ -7,6 +7,7 @@ export interface LoxData {
   splays: { from: number, to: number, surveyId: number, flags: number, isSurface?: boolean }[]; // to is often -1
   surfaceLegs: { from: number, to: number, surveyId: number, flags: number, isSurface?: boolean }[];
   surveys: Map<number, { name: string, parentId: number }>;
+  scraps: { vertices: Float32Array, indices: Uint32Array }[];
   metadata: {
     name: string;
     totalLength: number;
@@ -31,6 +32,7 @@ export class LoxLoader {
       splays: [],
       surfaceLegs: [],
       surveys: new Map(),
+      scraps: [],
       metadata: { name: 'Cave Project', totalLength: 0, maxDepth: 0, numStations: 0 }
     };
 
@@ -42,11 +44,11 @@ export class LoxLoader {
       const dataSize = view.getUint32(offset + 12, true);
 
       const chunkOffset = offset + 16;
+
+      // Staré chunks v LOX (Type 1, 2, 3) používajú iný výpočet dataPoolOffsetu ako Type 4 atď,
+      // ale pre čítanie reťazcov zvyčajne platilo dataPoolOffset = chunkOffset + recSize.
+      // Ak chceme zachovať pôvodné funkčné správanie, necháme to takto pre stringy.
       const dataPoolOffset = chunkOffset + recSize;
-      const nextChunkOffset = dataPoolOffset + dataSize;
-
-      if (nextChunkOffset > buffer.byteLength) break;
-
       const dataPool = new Uint8Array(buffer, dataPoolOffset, dataSize);
       const decoder = new TextDecoder('utf-8');
       const getString = (pos: number, size: number) => {
@@ -103,8 +105,89 @@ export class LoxLoader {
             data.legs.push({ from, to, surveyId, flags, isSurface: isSurfaceReal });
           }
           break;
+
+        case 4: // SCRAP (Native Therion Walls)
+          for (let i = 0; i < recCount; i++) {
+            const rOff = chunkOffset + i * 32;
+            // In Lox format, data size might be different or pointers are from dataPoolOffset
+            // which in earlier functional version was just dataPoolOffset
+            const numPoints = view.getUint32(rOff + 24, true);
+            const numAngles = view.getUint32(rOff + 28, true);
+            const pointsPos = view.getUint32(rOff + 8, true);
+            const anglesPos = view.getUint32(rOff + 16, true);
+
+            // Revert back to the working parse from before my offset changes:
+            const scrapDataPoolOffset = chunkOffset + recSize;
+
+            if (numPoints > 0 && numAngles > 0) {
+              const pOffset = scrapDataPoolOffset + pointsPos;
+              const aOffset = scrapDataPoolOffset + anglesPos;
+
+              const vertices = new Float32Array(numPoints * 3);
+              for (let v = 0; v < numPoints; v++) {
+                 vertices[v * 3] = view.getFloat64(pOffset + v * 24, true);
+                 vertices[v * 3 + 1] = view.getFloat64(pOffset + v * 24 + 8, true);
+                 vertices[v * 3 + 2] = view.getFloat64(pOffset + v * 24 + 16, true);
+              }
+
+              const indices = new Uint32Array(numAngles * 3);
+              let lastFace: number[] | undefined = undefined;
+
+              for (let t = 0; t < numAngles; t++) {
+                 const i1 = view.getUint32(aOffset + t * 12, true);
+                 const i2 = view.getUint32(aOffset + t * 12 + 4, true);
+                 const i3 = view.getUint32(aOffset + t * 12 + 8, true);
+
+                 if (i1 === i2 || i1 === i3 || i2 === i3) continue; // Degenerované trojuholníky preskočíme
+
+                 const face = [i1, i2, i3];
+
+                 // Overenie správneho winding order podľa pôvodného CaveView parsera
+                 if (lastFace) {
+                     let fixed = false;
+                     for (let j = 0; j < 3; j++) {
+                         if (face[j] === lastFace[(j + 2) % 3] && face[(j + 1) % 3] === lastFace[(j + 3) % 3]) {
+                             face.reverse();
+                             fixed = true;
+                             break;
+                         }
+                     }
+                     if (!fixed) {
+                         for (let j = 0; j < 3; j++) {
+                             if (face[j] === lastFace[j] && face[(j + 1) % 3] === lastFace[(j + 1) % 3]) {
+                                 face.reverse();
+                                 fixed = true;
+                                 break;
+                             }
+                         }
+                     }
+                     if (!fixed) {
+                         for (let j = 0; j < 3; j++) {
+                             if (face[j] === lastFace[(j + 1) % 3] && face[(j + 1) % 3] === lastFace[(j + 2) % 3]) {
+                                 face.reverse();
+                                 fixed = true;
+                                 break;
+                             }
+                         }
+                     }
+                 }
+
+                 indices[t * 3] = face[0];
+                 indices[t * 3 + 1] = face[1];
+                 indices[t * 3 + 2] = face[2];
+                 lastFace = face;
+              }
+
+              data.scraps.push({ vertices, indices });
+            }
+          }
+          break;
       }
-      offset = nextChunkOffset;
+
+      // Tento offset calculation bol v pôvodnej verzii LoxLoader.ts (ktorá fungovala pred mojimi zmenami) nastavený na:
+      // dataPoolOffset + dataSize, čo bolo (chunkOffset + recSize) + dataSize.
+      // Zvyšok necháme takto, aby staré chunky fungovali.
+      offset = dataPoolOffset + dataSize;
     }
 
     // Post-process legs to extract splays based on station names

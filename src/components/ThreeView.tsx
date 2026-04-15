@@ -210,32 +210,80 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
       }
     });
 
-    // Vytvorenie obalu 3D jaskyne (Walls / Convex Hulls)
-    const hullGeometries: THREE.BufferGeometry[] = [];
-    stationSplayMap.forEach((points, stationId) => {
-        // Konvexný obal má zmysel generovať iba ak má stanica aspoň 4 body pre vytvorenie priestorového objemu
-        if (points.length >= 4) {
-            try {
-                const convexGeom = new ConvexGeometry(points);
-                hullGeometries.push(convexGeom);
-            } catch (e) {
-                console.warn("Could not generate convex hull for station", stationId, e);
-            }
-        }
-    });
+    // Vytvorenie obalu 3D jaskyne (Walls)
+    if (data.scraps && data.scraps.length > 0) {
+        const scrapGeom = new THREE.BufferGeometry();
 
-    if (hullGeometries.length > 0) {
-        const mergedGeom = BufferGeometryUtils.mergeGeometries(hullGeometries, false);
-        if (mergedGeom) {
-            const wallMaterial = new THREE.MeshStandardMaterial({
-                color: 0x888888,
-                transparent: true,
-                opacity: 0.3,
-                roughness: 0.8,
-                side: THREE.DoubleSide
-            });
-            const wallsMesh = new THREE.Mesh(mergedGeom, wallMaterial);
-            wallsGroup.current.add(wallsMesh);
+        let totalVerts = 0;
+        let totalIndices = 0;
+        data.scraps.forEach((scrap: any) => { totalVerts += scrap.vertices.length; totalIndices += scrap.indices.length; });
+
+        const mergedVerts = new Float32Array(totalVerts);
+        const mergedIndices = new Uint32Array(totalIndices);
+
+        let vOffset = 0; let iOffset = 0; let vCount = 0;
+        data.scraps.forEach((scrap: any) => {
+          mergedVerts.set(scrap.vertices, vOffset);
+          for(let i=0; i<scrap.indices.length; i++) mergedIndices[iOffset++] = scrap.indices[i] + vCount;
+          vOffset += scrap.vertices.length;
+          vCount += scrap.vertices.length / 3;
+        });
+        scrapGeom.setAttribute('position', new THREE.BufferAttribute(mergedVerts, 3));
+        scrapGeom.setIndex(new THREE.BufferAttribute(mergedIndices, 1));
+        scrapGeom.computeVertexNormals();
+
+        // Nastavenie farby stien podľa hĺbky pre natívne steny
+        const colors = new Float32Array(mergedVerts.length);
+        const color = new THREE.Color();
+        for (let i = 0; i < mergedVerts.length; i += 3) {
+            const z = mergedVerts[i + 2];
+            let t = (z - minZ) / (maxZ - minZ);
+            if (isNaN(t) || !isFinite(t)) t = 0;
+            t = Math.max(0, Math.min(1, t)); // clamp
+            color.setHSL((1 - t) * 0.8, 1.0, 0.5); // rainbow farba
+            colors[i] = color.r;
+            colors[i + 1] = color.g;
+            colors[i + 2] = color.b;
+        }
+        scrapGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const wallMaterial = new THREE.MeshStandardMaterial({
+            vertexColors: true,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.6,
+            roughness: 0.8,
+            depthWrite: false
+        });
+        const wallsMesh = new THREE.Mesh(scrapGeom, wallMaterial);
+        wallsGroup.current.add(wallsMesh);
+    } else {
+        // Fallback: Vytvorenie obalu z Convex Hulls pre staršie LOX bez Type 4 scrapov
+        const hullGeometries: THREE.BufferGeometry[] = [];
+        stationSplayMap.forEach((points, stationId) => {
+            if (points.length >= 4) {
+                try {
+                    const convexGeom = new ConvexGeometry(points);
+                    hullGeometries.push(convexGeom);
+                } catch (e) {
+                    console.warn("Could not generate convex hull for station", stationId, e);
+                }
+            }
+        });
+
+        if (hullGeometries.length > 0) {
+            const mergedGeom = BufferGeometryUtils.mergeGeometries(hullGeometries, false);
+            if (mergedGeom) {
+                const wallMaterial = new THREE.MeshStandardMaterial({
+                    color: 0x888888,
+                    transparent: true,
+                    opacity: 0.3,
+                    roughness: 0.8,
+                    side: THREE.DoubleSide
+                });
+                const wallsMesh = new THREE.Mesh(mergedGeom, wallMaterial);
+                wallsGroup.current.add(wallsMesh);
+            }
         }
     }
 

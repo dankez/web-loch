@@ -94,7 +94,7 @@ export const HUD = ({ stats, fileName }: { stats: HUDStats, fileName: string | n
     <div style={{
       position: 'absolute',
       bottom: '20px',
-      left: '320px', // Right next to the sidebar (300px width + 20px margin)
+      left: '10px', // Na ľavom okraji Viewportu, úplne pri stene
       pointerEvents: 'none',
       zIndex: 1000,
       color: '#00ffff',
