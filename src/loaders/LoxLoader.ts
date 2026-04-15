@@ -85,23 +85,31 @@ export class LoxLoader {
         case 3: // SHOT
           for (let i = 0; i < recCount; i++) {
             const rOff = chunkOffset + i * 92;
-            const from = view.getUint32(rOff, true);
-            const to = view.getInt32(rOff + 4, true); // to can be -1
-            const surveyId = view.getUint32(rOff + 8, true);
-            const flags = view.getUint32(rOff + 80, true);
+            const m_from_r = view.getUint32(rOff, true);
+            const m_to_r = view.getUint32(rOff + 4, true);
 
-            // Flag at offset 72 indicates if it is a surface shot (1 = surface, 0 = underground)
-            const surfaceFlag = view.getUint32(rOff + 72, true);
-            const isSurfaceReal = surfaceFlag === 1;
+            let from, to;
+            if (m_to_r > m_from_r) {
+                from = m_from_r;
+                to = m_to_r;
+            } else {
+                from = m_to_r;
+                to = m_from_r;
+            }
 
-            // In Lox format, often stations named "." are splays endpoint.
-            // We can detect them later. For now, rely on to being valid, but check station names.
-            const isSplayFlag = (flags & 16) !== 0 || to === -1;
-            const isDuplicate = (flags & 2) !== 0;
+            const flags = view.getUint32(rOff + 72, true);
+            const surveyId = view.getUint32(rOff + 80, true);
+
+            // Flags podla CaveView.js:
+            // LXFILE_SHOT_FLAG_SURFACE = 1,
+            // LXFILE_SHOT_FLAG_DUPLICATE = 2,
+            // LXFILE_SHOT_FLAG_NOT_VISIBLE = 4,
+            // LXFILE_SHOT_FLAG_NOT_LRUD = 8,
+            // LXFILE_SHOT_FLAG_SPLAY = 16,
             const isSurface = (flags & 1) !== 0;
 
             // We will separate splays after loading stations by name check.
-            data.legs.push({ from, to, surveyId, flags, isSurface: isSurfaceReal });
+            data.legs.push({ from, to, surveyId, flags, isSurface });
           }
           break;
 
@@ -191,14 +199,15 @@ export class LoxLoader {
 
     data.legs.forEach(leg => {
       const toStation = data.stations.get(leg.to);
-      const isSplayFlag = (leg.flags & 16) !== 0 || leg.to === -1;
+      const isSplayFlag = (leg.flags & 16) !== 0 || (leg.flags & 8) !== 0 || leg.to === -1;
       const isDuplicate = (leg.flags & 2) !== 0;
 
       const toName = toStation ? toStation.name : '';
       // Ak meno neobsahuje žiadne alfanumerické znaky (napr. ".", ",", "", atď.), je to splay.
       // Slepý bod končiaci písmenom alebo číslom je polygón.
       const hasAlphaNum = /[a-zA-Z0-9]/.test(toName);
-      const isNameSplay = !hasAlphaNum;
+      // Prazdny string tiez povazujeme za meno (moze to byt unnamed stanica v tahu)
+      const isNameSplay = !hasAlphaNum && toName !== '';
 
       if (leg.isSurface) {
         surfaceLegs.push(leg);
