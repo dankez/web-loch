@@ -257,33 +257,84 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
         });
         const wallsMesh = new THREE.Mesh(scrapGeom, wallMaterial);
         wallsGroup.current.add(wallsMesh);
-    } else {
-        // Fallback: Vytvorenie obalu z Convex Hulls pre staršie LOX bez Type 4 scrapov
-        const hullGeometries: THREE.BufferGeometry[] = [];
-        stationSplayMap.forEach((points, stationId) => {
-            if (points.length >= 4) {
-                try {
-                    const convexGeom = new ConvexGeometry(points);
-                    hullGeometries.push(convexGeom);
-                } catch (e) {
-                    console.warn("Could not generate convex hull for station", stationId, e);
-                }
-            }
-        });
+    }
 
-        if (hullGeometries.length > 0) {
-            const mergedGeom = BufferGeometryUtils.mergeGeometries(hullGeometries, false);
-            if (mergedGeom) {
-                const wallMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x888888,
-                    transparent: true,
-                    opacity: 0.3,
-                    roughness: 0.8,
-                    side: THREE.DoubleSide
-                });
-                const wallsMesh = new THREE.Mesh(mergedGeom, wallMaterial);
-                wallsGroup.current.add(wallsMesh);
+    // 2. SPLAY WALLS (Aproximácia jaskyne pomocou vyhladeného obalu splay bodov pozdĺž ťahov)
+    // Vygenerujeme steny jaskyne aj zo splay bodov a vyhladíme ich, pre vytvorenie prirodzeneho tvaru.
+    const splayHullGeoms: THREE.BufferGeometry[] = [];
+
+    // Namiesto izolovaných convex hulls pre každú stanicu, vytvoríme prepojené segmenty pozdĺž jaskynných ťahov (leg).
+    // Pre každý ťah zoberieme splays z oboch staníc a obalíme ich spoločne.
+    data.legs.forEach(leg => {
+        if (leg.isSurface) return; // jaskynné polygóny iba
+
+        const fromSplays = stationSplayMap.get(leg.from) || [];
+        const toSplays = stationSplayMap.get(leg.to) || [];
+
+        const p1 = data.stations.get(leg.from)?.pos;
+        const p2 = data.stations.get(leg.to)?.pos;
+        if (!p1 || !p2) return;
+
+        const segmentPoints = [...fromSplays, ...toSplays];
+
+        // Pridať samotné stanice, aby obal pokryl aj ťah, ak má málo splayov
+        segmentPoints.push(p1.clone().sub(offset));
+        segmentPoints.push(p2.clone().sub(offset));
+
+        if (segmentPoints.length >= 4) {
+            try {
+                const convexGeom = new ConvexGeometry(segmentPoints);
+
+                // Inflate and Smooth
+                convexGeom.computeVertexNormals();
+                const positions = convexGeom.attributes.position;
+                const normals = convexGeom.attributes.normal;
+                for(let i=0; i<positions.count; i++) {
+                    // Inflate o 0.2 metra pozdĺž normály, aby sa obal vyhladil a zmenšili sa ostré rohy medzi segmentami
+                    positions.setXYZ(
+                        i,
+                        positions.getX(i) + normals.getX(i) * 0.2,
+                        positions.getY(i) + normals.getY(i) * 0.2,
+                        positions.getZ(i) + normals.getZ(i) * 0.2
+                    );
+                }
+
+                splayHullGeoms.push(convexGeom);
+            } catch(e) { }
+        }
+    });
+
+    if (splayHullGeoms.length > 0) {
+        let mergedSplayGeom = BufferGeometryUtils.mergeGeometries(splayHullGeoms, false);
+        if (mergedSplayGeom) {
+            mergedSplayGeom.computeVertexNormals(); // recompute smooth normals after merge
+
+            // Farba podla hlbky aj pre splay walls
+            const sColors = new Float32Array(mergedSplayGeom.attributes.position.count * 3);
+            const sColor = new THREE.Color();
+            const posAttr = mergedSplayGeom.attributes.position;
+            for (let i = 0; i < posAttr.count; i++) {
+                const z = posAttr.getZ(i);
+                let t = (z - minZ) / (maxZ - minZ);
+                if (isNaN(t) || !isFinite(t)) t = 0;
+                t = Math.max(0, Math.min(1, t)); // clamp
+                sColor.setHSL((1 - t) * 0.8, 1.0, 0.5); // rainbow
+                sColors[i * 3] = sColor.r;
+                sColors[i * 3 + 1] = sColor.g;
+                sColors[i * 3 + 2] = sColor.b;
             }
+            mergedSplayGeom.setAttribute('color', new THREE.BufferAttribute(sColors, 3));
+
+            const splayWallMat = new THREE.MeshStandardMaterial({
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.15, // Veľmi jemný priehľadný obal aby nezatienil natívne steny
+                roughness: 1.0,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+            const splayWallsMesh = new THREE.Mesh(mergedSplayGeom, splayWallMat);
+            wallsGroup.current.add(splayWallsMesh);
         }
     }
 
