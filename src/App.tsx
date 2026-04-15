@@ -175,7 +175,7 @@ function App() {
           bgColor={settings.bgColor}
           fontSize={settings.fontSize}
         />
-        <HUD stats={stats} fileName={fileName} />
+        <HUD stats={stats} />
       </div>
     </div>
   );

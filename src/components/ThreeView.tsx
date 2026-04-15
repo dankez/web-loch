@@ -92,13 +92,6 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
     if (!firstPos) return;
     const offset = (firstPos as THREE.Vector3).clone();
 
-    // Update Stats with altitude
-    onUpdateStats({
-      cursorX: 0, cursorY: 0, cursorZ: 0, dist: 0, azimuth: 0, inclination: 0, depth: null,
-      minZ: minZ !== Infinity ? minZ : 0,
-      maxZ: maxZ !== -Infinity ? maxZ : 0
-    });
-
     // BoxHelper creation
     const box = new THREE.Box3();
     // Expand box by ALL stations so splays are also within the bounding box
@@ -210,32 +203,48 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
       }
     });
 
-    // Vytvorenie obalu 3D jaskyne (Walls / Convex Hulls)
-    const hullGeometries: THREE.BufferGeometry[] = [];
-    stationSplayMap.forEach((points, stationId) => {
-        // Konvexný obal má zmysel generovať iba ak má stanica aspoň 4 body pre vytvorenie priestorového objemu
-        if (points.length >= 4) {
-            try {
-                const convexGeom = new ConvexGeometry(points);
-                hullGeometries.push(convexGeom);
-            } catch (e) {
-                console.warn("Could not generate convex hull for station", stationId, e);
-            }
-        }
+    // Vytvorenie obalu 3D jaskyne
+    const wallMaterial = new THREE.MeshStandardMaterial({
+        color: 0x888888,
+        transparent: true,
+        opacity: 0.3,
+        roughness: 0.8,
+        side: THREE.DoubleSide
     });
 
-    if (hullGeometries.length > 0) {
-        const mergedGeom = BufferGeometryUtils.mergeGeometries(hullGeometries, false);
-        if (mergedGeom) {
-            const wallMaterial = new THREE.MeshStandardMaterial({
-                color: 0x888888,
-                transparent: true,
-                opacity: 0.3,
-                roughness: 0.8,
-                side: THREE.DoubleSide
-            });
-            const wallsMesh = new THREE.Mesh(mergedGeom, wallMaterial);
-            wallsGroup.current.add(wallsMesh);
+    if (data.scraps && data.scraps.length > 0) {
+        // Native Therion steny
+        data.scraps.forEach(scrap => {
+            const geom = new THREE.BufferGeometry();
+            geom.setAttribute('position', new THREE.BufferAttribute(scrap.vertices, 3));
+            geom.setIndex(new THREE.BufferAttribute(scrap.indices, 1));
+            geom.computeVertexNormals();
+
+            const mesh = new THREE.Mesh(geom, wallMaterial);
+            // Dôležité: posunúť model podľa nášho root ofsetu (aby sa vyrovnal na x=0,y=0)
+            mesh.position.sub(offset);
+            wallsGroup.current.add(mesh);
+        });
+    } else {
+        // Fallback: Vytvorenie obalu 3D jaskyne z Convex Hulls
+        const hullGeometries: THREE.BufferGeometry[] = [];
+        stationSplayMap.forEach((points, stationId) => {
+            if (points.length >= 4) {
+                try {
+                    const convexGeom = new ConvexGeometry(points);
+                    hullGeometries.push(convexGeom);
+                } catch (e) {
+                    console.warn("Could not generate convex hull for station", stationId, e);
+                }
+            }
+        });
+
+        if (hullGeometries.length > 0) {
+            const mergedGeom = BufferGeometryUtils.mergeGeometries(hullGeometries, false);
+            if (mergedGeom) {
+                const wallsMesh = new THREE.Mesh(mergedGeom, wallMaterial);
+                wallsGroup.current.add(wallsMesh);
+            }
         }
     }
 
