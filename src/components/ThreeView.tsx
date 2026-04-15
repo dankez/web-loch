@@ -92,6 +92,13 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
     if (!firstPos) return;
     const offset = (firstPos as THREE.Vector3).clone();
 
+    // Update Stats with altitude
+    onUpdateStats({
+      cursorX: 0, cursorY: 0, cursorZ: 0, dist: 0, azimuth: 0, inclination: 0, depth: null,
+      minZ: minZ !== Infinity ? minZ : 0,
+      maxZ: maxZ !== -Infinity ? maxZ : 0
+    });
+
     // BoxHelper creation
     const box = new THREE.Box3();
     // Expand box by ALL stations so splays are also within the bounding box
@@ -203,48 +210,32 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
       }
     });
 
-    // Vytvorenie obalu 3D jaskyne
-    const wallMaterial = new THREE.MeshStandardMaterial({
-        color: 0x888888,
-        transparent: true,
-        opacity: 0.3,
-        roughness: 0.8,
-        side: THREE.DoubleSide
+    // Vytvorenie obalu 3D jaskyne (Walls / Convex Hulls)
+    const hullGeometries: THREE.BufferGeometry[] = [];
+    stationSplayMap.forEach((points, stationId) => {
+        // Konvexný obal má zmysel generovať iba ak má stanica aspoň 4 body pre vytvorenie priestorového objemu
+        if (points.length >= 4) {
+            try {
+                const convexGeom = new ConvexGeometry(points);
+                hullGeometries.push(convexGeom);
+            } catch (e) {
+                console.warn("Could not generate convex hull for station", stationId, e);
+            }
+        }
     });
 
-    if (data.scraps && data.scraps.length > 0) {
-        // Native Therion steny
-        data.scraps.forEach(scrap => {
-            const geom = new THREE.BufferGeometry();
-            geom.setAttribute('position', new THREE.BufferAttribute(scrap.vertices, 3));
-            geom.setIndex(new THREE.BufferAttribute(scrap.indices, 1));
-            geom.computeVertexNormals();
-
-            const mesh = new THREE.Mesh(geom, wallMaterial);
-            // Dôležité: posunúť model podľa nášho root ofsetu (aby sa vyrovnal na x=0,y=0)
-            mesh.position.sub(offset);
-            wallsGroup.current.add(mesh);
-        });
-    } else {
-        // Fallback: Vytvorenie obalu 3D jaskyne z Convex Hulls
-        const hullGeometries: THREE.BufferGeometry[] = [];
-        stationSplayMap.forEach((points, stationId) => {
-            if (points.length >= 4) {
-                try {
-                    const convexGeom = new ConvexGeometry(points);
-                    hullGeometries.push(convexGeom);
-                } catch (e) {
-                    console.warn("Could not generate convex hull for station", stationId, e);
-                }
-            }
-        });
-
-        if (hullGeometries.length > 0) {
-            const mergedGeom = BufferGeometryUtils.mergeGeometries(hullGeometries, false);
-            if (mergedGeom) {
-                const wallsMesh = new THREE.Mesh(mergedGeom, wallMaterial);
-                wallsGroup.current.add(wallsMesh);
-            }
+    if (hullGeometries.length > 0) {
+        const mergedGeom = BufferGeometryUtils.mergeGeometries(hullGeometries, false);
+        if (mergedGeom) {
+            const wallMaterial = new THREE.MeshStandardMaterial({
+                color: 0x888888,
+                transparent: true,
+                opacity: 0.3,
+                roughness: 0.8,
+                side: THREE.DoubleSide
+            });
+            const wallsMesh = new THREE.Mesh(mergedGeom, wallMaterial);
+            wallsGroup.current.add(wallsMesh);
         }
     }
 
@@ -349,11 +340,70 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
     controls.enableDamping = true;
     controlsRef.current = controls;
 
+    let lastCameraAzimuth = -1;
+    let lastCameraInclination = -1;
+    let lastScale = -1;
+
     let animationId: number;
     const animate = () => {
       animationId = requestAnimationFrame(animate);
       controls.update();
       renderer.render(scene, camera);
+
+      // Update HUD stats if camera changed
+      if (mountRef.current && loxDataRef.current) {
+          const dir = new THREE.Vector3();
+          camera.getWorldDirection(dir);
+
+          // Azimuth (around Z axis, assuming Z is UP)
+          let azimuth = (Math.atan2(dir.x, dir.y) * 180 / Math.PI + 360) % 360;
+
+          // Inclination
+          let inclination = Math.asin(dir.z) * 180 / Math.PI;
+
+          // Scale: meters across a 100px segment of the screen
+          const distance = camera.position.distanceTo(controls.target);
+          const fov = THREE.MathUtils.degToRad(camera.fov);
+          const visibleHeight = 2 * Math.tan(fov / 2) * distance;
+          const visibleWidth = visibleHeight * camera.aspect;
+
+          // Assume the 100px scale bar width
+          const pixelRatio = 100 / mountRef.current.clientWidth;
+          const currentScale = visibleWidth * pixelRatio;
+
+          // To avoid massive state updates, only trigger when changed by > 1 degree or > 5% scale
+          if (
+             Math.abs(azimuth - lastCameraAzimuth) > 1 ||
+             Math.abs(inclination - lastCameraInclination) > 1 ||
+             Math.abs(currentScale - lastScale) / (lastScale || 1) > 0.05
+          ) {
+             lastCameraAzimuth = azimuth;
+             lastCameraInclination = inclination;
+             lastScale = currentScale;
+
+             // Načítanie minZ/maxZ
+             let minZ = Infinity, maxZ = -Infinity;
+             loxDataRef.current.stations.forEach((s) => {
+                 const hasAlphaNum = /[a-zA-Z0-9]/.test(s.name);
+                 const isNameSplay = !hasAlphaNum;
+                 const isPureSurfaceNode = (s as any).isPureSurface;
+                 if (!isNameSplay && !isPureSurfaceNode) {
+                    if (s.pos.z < minZ) minZ = s.pos.z;
+                    if (s.pos.z > maxZ) maxZ = s.pos.z;
+                 }
+             });
+
+             onUpdateStats({
+                cursorX: 0, cursorY: 0, cursorZ: 0,
+                dist: 0, azimuth: 0, inclination: 0, depth: null,
+                minZ: minZ !== Infinity ? minZ : 0,
+                maxZ: maxZ !== -Infinity ? maxZ : 0,
+                cameraAzimuth: azimuth,
+                cameraInclination: inclination,
+                cameraScale: currentScale
+             });
+          }
+      }
     };
     animate();
 
