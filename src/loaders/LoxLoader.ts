@@ -44,11 +44,10 @@ export class LoxLoader {
       const dataSize = view.getUint32(offset + 12, true);
 
       const chunkOffset = offset + 16;
-
-      // Staré chunks v LOX (Type 1, 2, 3) používajú iný výpočet dataPoolOffsetu ako Type 4 atď,
-      // ale pre čítanie reťazcov zvyčajne platilo dataPoolOffset = chunkOffset + recSize.
-      // Ak chceme zachovať pôvodné funkčné správanie, necháme to takto pre stringy.
       const dataPoolOffset = chunkOffset + recSize;
+
+      if (dataPoolOffset + dataSize > buffer.byteLength) break;
+
       const dataPool = new Uint8Array(buffer, dataPoolOffset, dataSize);
       const decoder = new TextDecoder('utf-8');
       const getString = (pos: number, size: number) => {
@@ -109,19 +108,17 @@ export class LoxLoader {
         case 4: // SCRAP (Native Therion Walls)
           for (let i = 0; i < recCount; i++) {
             const rOff = chunkOffset + i * 32;
-            // In Lox format, data size might be different or pointers are from dataPoolOffset
-            // which in earlier functional version was just dataPoolOffset
-            const numPoints = view.getUint32(rOff + 24, true);
-            const numAngles = view.getUint32(rOff + 28, true);
-            const pointsPos = view.getUint32(rOff + 8, true);
-            const anglesPos = view.getUint32(rOff + 16, true);
 
-            // Revert back to the working parse from before my offset changes:
-            const scrapDataPoolOffset = chunkOffset + recSize;
+            // Using correct offsets verified from CaveView.js
+            const numPoints = view.getUint32(rOff + 8, true);
+            const pointsPos = view.getUint32(rOff + 12, true); // pointsPtr.position
+
+            const numAngles = view.getUint32(rOff + 20, true);
+            const anglesPos = view.getUint32(rOff + 24, true); // facesPtr.position
 
             if (numPoints > 0 && numAngles > 0) {
-              const pOffset = scrapDataPoolOffset + pointsPos;
-              const aOffset = scrapDataPoolOffset + anglesPos;
+              const pOffset = dataPoolOffset + pointsPos;
+              const aOffset = dataPoolOffset + anglesPos;
 
               const vertices = new Float32Array(numPoints * 3);
               for (let v = 0; v < numPoints; v++) {
@@ -184,10 +181,7 @@ export class LoxLoader {
           break;
       }
 
-      // Tento offset calculation bol v pôvodnej verzii LoxLoader.ts (ktorá fungovala pred mojimi zmenami) nastavený na:
-      // dataPoolOffset + dataSize, čo bolo (chunkOffset + recSize) + dataSize.
-      // Zvyšok necháme takto, aby staré chunky fungovali.
-      offset = dataPoolOffset + dataSize;
+      offset += 16 + recSize + dataSize;
     }
 
     // Post-process legs to extract splays based on station names
