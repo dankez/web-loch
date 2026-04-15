@@ -26,13 +26,15 @@ function App() {
     stations: true,
     labels: false,
     altitudeColor: true,
-    boundingBox: false
+    boundingBox: false,
+    walls: false
   });
 
   const [settings, setSettings] = useState({
     centerlineWidth: 2,
     splayWidth: 1,
-    bgColor: '#050505'
+    bgColor: '#050505',
+    fontSize: 1
   });
 
   const [fileName, setFileName] = useState<string | null>(null);
@@ -115,6 +117,9 @@ function App() {
             <button className={`btn ${vis.labels ? 'btn-active' : ''}`} onClick={() => setVis({...vis, labels: !vis.labels})}>
               {vis.labels ? '🏷️ Názvy staníc: ZAP' : '🏷️ Názvy staníc: VYP'}
             </button>
+            <button className={`btn ${vis.walls ? 'btn-active' : ''}`} onClick={() => setVis({...vis, walls: !vis.walls})}>
+              {vis.walls ? '🧱 3D Steny: ZAP' : '🧱 3D Steny: VYP'}
+            </button>
             <button className={`btn ${vis.altitudeColor ? 'btn-active' : ''}`} onClick={() => setVis({...vis, altitudeColor: !vis.altitudeColor})}>
               {vis.altitudeColor ? '🌈 Výškový gradient: ZAP' : '🌈 Výškový gradient: VYP'}
             </button>
@@ -135,6 +140,10 @@ function App() {
             <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '12px', marginTop: '10px' }}>
               Hrúbka Splays: {settings.splayWidth}
               <input type="range" min="1" max="5" step="1" value={settings.splayWidth} onChange={e => setSettings({...settings, splayWidth: parseFloat(e.target.value)})} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '12px', marginTop: '10px' }}>
+              Veľkosť textu: {settings.fontSize}
+              <input type="range" min="0.1" max="5" step="0.1" value={settings.fontSize} onChange={e => setSettings({...settings, fontSize: parseFloat(e.target.value)})} />
             </label>
             <label style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '12px', marginTop: '15px' }}>
               Farba pozadia:
@@ -160,9 +169,11 @@ function App() {
           labelsVisible={vis.labels}
           altitudeColor={vis.altitudeColor}
           boundingBoxVisible={vis.boundingBox}
+          wallsVisible={vis.walls}
           centerlineWidth={settings.centerlineWidth}
           splayWidth={settings.splayWidth}
           bgColor={settings.bgColor}
+          fontSize={settings.fontSize}
         />
         <HUD stats={stats} />
       </div>

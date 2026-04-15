@@ -3,9 +3,11 @@ import * as THREE from 'three';
 
 export interface LoxData {
   stations: Map<number, { name: string, pos: THREE.Vector3, surveyId: number }>;
-  legs: { from: number, to: number, surveyId: number, flags: number }[];
-  splays: { from: number, to: number, surveyId: number, flags: number }[]; // to is often -1
+  legs: { from: number, to: number, surveyId: number, flags: number, isSurface?: boolean }[];
+  splays: { from: number, to: number, surveyId: number, flags: number, isSurface?: boolean }[]; // to is often -1
+  surfaceLegs: { from: number, to: number, surveyId: number, flags: number, isSurface?: boolean }[];
   surveys: Map<number, { name: string, parentId: number }>;
+  scraps: { vertices: Float32Array, indices: Uint32Array }[];
   metadata: {
     name: string;
     totalLength: number;
@@ -28,7 +30,9 @@ export class LoxLoader {
       stations: new Map(),
       legs: [],
       splays: [],
+      surfaceLegs: [],
       surveys: new Map(),
+      scraps: [],
       metadata: { name: 'Cave Project', totalLength: 0, maxDepth: 0, numStations: 0 }
     };
 
@@ -87,6 +91,10 @@ export class LoxLoader {
             const surveyId = view.getUint32(rOff + 8, true);
             const flags = view.getUint32(rOff + 80, true);
 
+            // Flag at offset 72 indicates if it is a surface shot (1 = surface, 0 = underground)
+            const surfaceFlag = view.getUint32(rOff + 72, true);
+            const isSurfaceReal = surfaceFlag === 1;
+
             // In Lox format, often stations named "." are splays endpoint.
             // We can detect them later. For now, rely on to being valid, but check station names.
             const isSplayFlag = (flags & 16) !== 0 || to === -1;
@@ -94,7 +102,83 @@ export class LoxLoader {
             const isSurface = (flags & 1) !== 0;
 
             // We will separate splays after loading stations by name check.
-            data.legs.push({ from, to, surveyId, flags });
+            data.legs.push({ from, to, surveyId, flags, isSurface: isSurfaceReal });
+          }
+          break;
+
+        case 4: // SCRAP (Native Therion Walls)
+          for (let i = 0; i < recCount; i++) {
+            const rOff = chunkOffset + i * 32;
+            const id = view.getUint32(rOff, true);
+            const surveyId = view.getUint32(rOff + 4, true);
+            const numPoints = view.getUint32(rOff + 8, true);
+            const pointsPos = view.getUint32(rOff + 12, true);
+            const pointsSize = view.getUint32(rOff + 16, true);
+            const numAngles = view.getUint32(rOff + 20, true);
+            const anglesPos = view.getUint32(rOff + 24, true);
+            const anglesSize = view.getUint32(rOff + 28, true);
+
+            if (numPoints > 0 && numAngles > 0) {
+              const pOffset = dataPoolOffset + pointsPos;
+              const aOffset = dataPoolOffset + anglesPos;
+
+              const vertices = new Float32Array(numPoints * 3);
+              for (let v = 0; v < numPoints; v++) {
+                 vertices[v * 3] = view.getFloat64(pOffset + v * 24, true);
+                 vertices[v * 3 + 1] = view.getFloat64(pOffset + v * 24 + 8, true);
+                 vertices[v * 3 + 2] = view.getFloat64(pOffset + v * 24 + 16, true);
+              }
+
+              const indices = new Uint32Array(numAngles * 3);
+              let lastFace: number[] | undefined = undefined;
+
+              for (let t = 0; t < numAngles; t++) {
+                 const i1 = view.getUint32(aOffset + t * 12, true);
+                 const i2 = view.getUint32(aOffset + t * 12 + 4, true);
+                 const i3 = view.getUint32(aOffset + t * 12 + 8, true);
+
+                 if (i1 === i2 || i1 === i3 || i2 === i3) continue; // Degenerované trojuholníky preskočíme
+
+                 const face = [i1, i2, i3];
+
+                 // Overenie správneho winding order podľa pôvodného CaveView parsera
+                 if (lastFace) {
+                     let fixed = false;
+                     for (let j = 0; j < 3; j++) {
+                         if (face[j] === lastFace[(j + 2) % 3] && face[(j + 1) % 3] === lastFace[(j + 3) % 3]) {
+                             face.reverse();
+                             fixed = true;
+                             break;
+                         }
+                     }
+                     if (!fixed) {
+                         for (let j = 0; j < 3; j++) {
+                             if (face[j] === lastFace[j] && face[(j + 1) % 3] === lastFace[(j + 1) % 3]) {
+                                 face.reverse();
+                                 fixed = true;
+                                 break;
+                             }
+                         }
+                     }
+                     if (!fixed) {
+                         for (let j = 0; j < 3; j++) {
+                             if (face[j] === lastFace[(j + 1) % 3] && face[(j + 1) % 3] === lastFace[(j + 2) % 3]) {
+                                 face.reverse();
+                                 fixed = true;
+                                 break;
+                             }
+                         }
+                     }
+                 }
+
+                 indices[t * 3] = face[0];
+                 indices[t * 3 + 1] = face[1];
+                 indices[t * 3 + 2] = face[2];
+                 lastFace = face;
+              }
+
+              data.scraps.push({ vertices, indices });
+            }
           }
           break;
       }
@@ -104,44 +188,80 @@ export class LoxLoader {
     // Post-process legs to extract splays based on station names
     const realLegs: typeof data.legs = [];
     const splays: typeof data.splays = [];
+    const surfaceLegs: typeof data.surfaceLegs = [];
 
     data.legs.forEach(leg => {
       const toStation = data.stations.get(leg.to);
       const isSplayFlag = (leg.flags & 16) !== 0 || leg.to === -1;
       const isDuplicate = (leg.flags & 2) !== 0;
-      const isSurface = (leg.flags & 1) !== 0;
 
       const toName = toStation ? toStation.name : '';
-      const isNameSplay = toName.includes('.') || toName.includes(',') || toName.includes('*');
+      // Ak meno neobsahuje žiadne alfanumerické znaky (napr. ".", ",", "", atď.), je to splay.
+      // Slepý bod končiaci písmenom alebo číslom je polygón.
+      const hasAlphaNum = /[a-zA-Z0-9]/.test(toName);
+      const isNameSplay = !hasAlphaNum;
 
-      // Centerline (polygon): Ak názov počiatočného aj koncového bodu obsahuje alfanumerické znaky
-      // Splay: Ak názov koncového bodu obsahuje špeciálny znak (. , *)
-      if (isSplayFlag || isNameSplay || !toStation) {
+      if (leg.isSurface) {
+        surfaceLegs.push(leg);
+      } else if (isSplayFlag || isNameSplay || !toStation) {
         splays.push(leg);
-      } else if (!isDuplicate && !isSurface) {
+      } else if (!isDuplicate) {
         realLegs.push(leg);
       }
     });
 
     data.legs = realLegs;
     data.splays = splays;
+    data.surfaceLegs = surfaceLegs;
 
-    // Metadata calc
+    // Build sets to classify stations
+    const surfaceStationIds = new Set<number>();
+    const undergroundStationIds = new Set<number>();
+
+    data.surfaceLegs.forEach(leg => {
+       surfaceStationIds.add(leg.from);
+       if (leg.to !== -1) surfaceStationIds.add(leg.to);
+    });
+    data.legs.forEach(leg => {
+       undergroundStationIds.add(leg.from);
+       if (leg.to !== -1) undergroundStationIds.add(leg.to);
+    });
+
+    // Pure surface station: has surface legs, but NO underground legs
+    const pureSurfaceIds = new Set<number>();
+    surfaceStationIds.forEach(id => {
+       if (!undergroundStationIds.has(id)) pureSurfaceIds.add(id);
+    });
+
+    // Označíme pure surface stanice flagom aby sa dali filtrovať pri renderovaní stien
+    data.stations.forEach((s, id) => {
+        if (pureSurfaceIds.has(id)) {
+            (s as any).isPureSurface = true;
+        }
+    });
+
+    // Metadata calc (exclude PURE surface stations and splays)
     let minZ = Infinity, maxZ = -Infinity;
-    data.stations.forEach(s => {
-      // Ignore splay endpoints for cave bounding box usually
-      const isNameSplay = s.name.includes('.') || s.name.includes(',') || s.name.includes('*');
-      if (!isNameSplay) {
+    data.stations.forEach((s, id) => {
+      const hasAlphaNum = /[a-zA-Z0-9]/.test(s.name);
+      const isNameSplay = !hasAlphaNum;
+      const isPureSurfaceNode = pureSurfaceIds.has(id);
+
+      if (!isNameSplay && !isPureSurfaceNode) {
          if (s.pos.z < minZ) minZ = s.pos.z;
          if (s.pos.z > maxZ) maxZ = s.pos.z;
       }
     });
     data.metadata.maxDepth = (maxZ === -Infinity) ? 0 : (maxZ - minZ);
-    data.metadata.numStations = data.stations.size;
+    data.metadata.numStations = data.stations.size; // Keep raw station count for now
+
+    // Length calc (only count underground real legs)
     data.legs.forEach(leg => {
       const p1 = data.stations.get(leg.from)?.pos;
       const p2 = data.stations.get(leg.to)?.pos;
-      if (p1 && p2) data.metadata.totalLength += p1.distanceTo(p2);
+      if (p1 && p2 && !leg.isSurface) {
+          data.metadata.totalLength += p1.distanceTo(p2);
+      }
     });
 
     return data;

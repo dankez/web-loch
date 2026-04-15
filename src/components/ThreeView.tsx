@@ -6,6 +6,8 @@ import { LoxData } from '../loaders/LoxLoader';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
 
@@ -21,6 +23,8 @@ interface ThreeViewProps {
   centerlineWidth: number;
   splayWidth: number;
   bgColor: string;
+  fontSize: number;
+  wallsVisible: boolean;
 }
 
 export interface ThreeViewHandle {
@@ -28,7 +32,7 @@ export interface ThreeViewHandle {
   clearScene: () => void;
 }
 
-const createTextSprite = (text: string) => {
+const createTextSprite = (text: string, sizeMultiplier: number) => {
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
   if (!context) return new THREE.Sprite();
@@ -50,13 +54,13 @@ const createTextSprite = (text: string) => {
   texture.minFilter = THREE.LinearFilter;
   const spriteMaterial = new THREE.SpriteMaterial({ map: texture, depthTest: false });
   const sprite = new THREE.Sprite(spriteMaterial);
-  sprite.scale.set(textWidth * 0.05, fontSize * 0.05, 1);
+  sprite.scale.set(textWidth * 0.05 * sizeMultiplier, fontSize * 0.05 * sizeMultiplier, 1);
   return sprite;
 };
 
 export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
   onUpdateStats, surfaceVisible, legsVisible, splaysVisible, stationsVisible,
-  labelsVisible, altitudeColor, boundingBoxVisible, centerlineWidth, splayWidth, bgColor
+  labelsVisible, altitudeColor, boundingBoxVisible, centerlineWidth, splayWidth, bgColor, fontSize, wallsVisible
 }, ref) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene>(new THREE.Scene());
@@ -66,6 +70,7 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
   const splaysGroup = useRef<THREE.Group>(new THREE.Group());
   const stationsGroup = useRef<THREE.Group>(new THREE.Group());
   const labelsGroup = useRef<THREE.Group>(new THREE.Group());
+  const wallsGroup = useRef<THREE.Group>(new THREE.Group());
   const boxHelperRef = useRef<THREE.Box3Helper | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
 
@@ -89,6 +94,10 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
 
     // BoxHelper creation
     const box = new THREE.Box3();
+    // Expand box by ALL stations so splays are also within the bounding box
+    data.stations.forEach(s => {
+        box.expandByPoint(s.pos.clone().sub(offset));
+    });
 
     // LEG Rendering
     data.legs.forEach(leg => {
@@ -98,26 +107,31 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
         const v1 = p1.clone().sub(offset);
         const v2 = p2.clone().sub(offset);
 
-        box.expandByPoint(v1);
-        box.expandByPoint(v2);
-
-        // Color mode
-        let color = new THREE.Color(0x00ff00);
-        if (altitudeColor) {
-            const avgZ = (p1.z + p2.z) / 2;
-            const t = (maxZ === minZ) ? 0 : (avgZ - minZ) / (maxZ - minZ);
-            color.setHSL(0.6 * (1 - t), 1, 0.5); // Blue to Red
-        }
-
         // Use Line2 for proper thickness support
         const geom = new LineGeometry();
         geom.setPositions([v1.x, v1.y, v1.z, v2.x, v2.y, v2.z]);
 
-        const mat = new LineMaterial({
-            color: color.getHex(),
+        // Color mode with gradient via Vertex Colors
+        const matOptions: any = {
             linewidth: centerlineWidth,
             resolution: new THREE.Vector2(window.innerWidth, window.innerHeight)
-        });
+        };
+
+        if (altitudeColor) {
+            const t1 = (maxZ === minZ) ? 0 : (p1.z - minZ) / (maxZ - minZ);
+            const color1 = new THREE.Color().setHSL(0.6 * (1 - t1), 1, 0.5);
+
+            const t2 = (maxZ === minZ) ? 0 : (p2.z - minZ) / (maxZ - minZ);
+            const color2 = new THREE.Color().setHSL(0.6 * (1 - t2), 1, 0.5);
+
+            geom.setColors([color1.r, color1.g, color1.b, color2.r, color2.g, color2.b]);
+            matOptions.vertexColors = true;
+            matOptions.color = 0xffffff;
+        } else {
+            matOptions.color = 0x00ff00;
+        }
+
+        const mat = new LineMaterial(matOptions);
 
         const line = new Line2(geom, mat);
         line.computeLineDistances();
@@ -125,9 +139,12 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
       }
     });
 
-    // SPLAY Rendering
+    // SPLAY Rendering & Volume Grouping
+    const stationSplayMap = new Map<number, THREE.Vector3[]>(); // stationId -> array of splay endpoint vectors
+
     data.splays.forEach(splay => {
-      const p1 = data.stations.get(splay.from)?.pos;
+      const station = data.stations.get(splay.from);
+      const p1 = station?.pos;
       const p2 = data.stations.get(splay.to)?.pos;
 
       if (p1 && p2) {
@@ -148,25 +165,116 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
           const line = new Line2(geom, splayMaterial);
           line.computeLineDistances();
           splaysGroup.current.add(line);
+
+          // Zbieranie bodov pre convex hull, NEPRIDAŤ pre PURE povrchové stanice
+          // Ak je stanica súčasťou jaskyne aj povrchu (zlomový bod), jej steny sa vygenerujú
+          if (!(station as any)?.isPureSurface) {
+              if (!stationSplayMap.has(splay.from)) {
+                  stationSplayMap.set(splay.from, [v1]); // pridať aj stred stanice ako základ
+              }
+              stationSplayMap.get(splay.from)?.push(v2);
+          }
       }
     });
 
+    // SURFACE Rendering
+    data.surfaceLegs.forEach(leg => {
+      const p1 = data.stations.get(leg.from)?.pos;
+      const p2 = data.stations.get(leg.to)?.pos;
+      if (p1 && p2) {
+        const v1 = p1.clone().sub(offset);
+        const v2 = p2.clone().sub(offset);
+
+        box.expandByPoint(v1);
+        box.expandByPoint(v2);
+
+        const geom = new LineGeometry();
+        geom.setPositions([v1.x, v1.y, v1.z, v2.x, v2.y, v2.z]);
+
+        const mat = new LineMaterial({
+            color: 0xffffff, // Biela fixná farba pre povrch
+            linewidth: centerlineWidth,
+            resolution: new THREE.Vector2(window.innerWidth, window.innerHeight)
+        });
+
+        const line = new Line2(geom, mat);
+        line.computeLineDistances();
+        legsGroup.current.add(line); // Pre teraz vložíme surface do legsGroup aby sa zapínali spoločne
+      }
+    });
+
+    // Vytvorenie obalu 3D jaskyne
+    const wallMaterial = new THREE.MeshStandardMaterial({
+        color: 0x888888,
+        transparent: true,
+        opacity: 0.3,
+        roughness: 0.8,
+        side: THREE.DoubleSide
+    });
+
+    if (data.scraps && data.scraps.length > 0) {
+        // Native Therion steny
+        data.scraps.forEach(scrap => {
+            const geom = new THREE.BufferGeometry();
+            geom.setAttribute('position', new THREE.BufferAttribute(scrap.vertices, 3));
+            geom.setIndex(new THREE.BufferAttribute(scrap.indices, 1));
+            geom.computeVertexNormals();
+
+            const mesh = new THREE.Mesh(geom, wallMaterial);
+            // Dôležité: posunúť model podľa nášho root ofsetu (aby sa vyrovnal na x=0,y=0)
+            mesh.position.sub(offset);
+            wallsGroup.current.add(mesh);
+        });
+    } else {
+        // Fallback: Vytvorenie obalu 3D jaskyne z Convex Hulls
+        const hullGeometries: THREE.BufferGeometry[] = [];
+        stationSplayMap.forEach((points, stationId) => {
+            if (points.length >= 4) {
+                try {
+                    const convexGeom = new ConvexGeometry(points);
+                    hullGeometries.push(convexGeom);
+                } catch (e) {
+                    console.warn("Could not generate convex hull for station", stationId, e);
+                }
+            }
+        });
+
+        if (hullGeometries.length > 0) {
+            const mergedGeom = BufferGeometryUtils.mergeGeometries(hullGeometries, false);
+            if (mergedGeom) {
+                const wallsMesh = new THREE.Mesh(mergedGeom, wallMaterial);
+                wallsGroup.current.add(wallsMesh);
+            }
+        }
+    }
+
     // STATION Rendering & Labels
-    const stationPoints: THREE.Vector3[] = [];
+    const mainStationPoints: THREE.Vector3[] = [];
+    const splayStationPoints: THREE.Vector3[] = [];
+
     data.stations.forEach(s => {
        const v = s.pos.clone().sub(offset);
-       stationPoints.push(v);
 
-       if (s.name !== '.') {
-           const sprite = createTextSprite(s.name);
+       const isNameSplay = !(/[a-zA-Z0-9]/.test(s.name));
+
+       if (!isNameSplay) {
+           mainStationPoints.push(v);
+           const sprite = createTextSprite(s.name, fontSize);
            sprite.position.copy(v);
            sprite.position.y += 0.2; // slight offset
            labelsGroup.current.add(sprite);
+       } else {
+           splayStationPoints.push(v);
        }
     });
-    const pointsGeom = new THREE.BufferGeometry().setFromPoints(stationPoints);
-    const pointsCloud = new THREE.Points(pointsGeom, new THREE.PointsMaterial({ color: 0xffff00, size: 0.2 }));
-    stationsGroup.current.add(pointsCloud);
+
+    const mainPointsGeom = new THREE.BufferGeometry().setFromPoints(mainStationPoints);
+    const mainPointsCloud = new THREE.Points(mainPointsGeom, new THREE.PointsMaterial({ color: 0xff0000, size: 0.2 })); // Cervena gulicka pre centerline stanice
+    stationsGroup.current.add(mainPointsCloud);
+
+    const splayPointsGeom = new THREE.BufferGeometry().setFromPoints(splayStationPoints);
+    const splayPointsCloud = new THREE.Points(splayPointsGeom, new THREE.PointsMaterial({ color: 0xffff00, size: 0.05 })); // Splay body 50% mensie z 0.1 na 0.05
+    stationsGroup.current.add(splayPointsCloud);
 
     // Bounding Box
     if (boxHelperRef.current) {
@@ -193,7 +301,7 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
   }));
 
   const clearCurrentData = () => {
-    [legsGroup, splaysGroup, stationsGroup, labelsGroup].forEach(g => {
+    [legsGroup, splaysGroup, stationsGroup, labelsGroup, wallsGroup].forEach(g => {
       while(g.current.children.length > 0) {
         const child = g.current.children[0] as any;
         if (child.geometry) child.geometry.dispose();
@@ -220,6 +328,13 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
     scene.add(splaysGroup.current);
     scene.add(stationsGroup.current);
     scene.add(labelsGroup.current);
+    scene.add(wallsGroup.current);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(0, -50, 100);
+    scene.add(dirLight);
 
     const camera = new THREE.PerspectiveCamera(75, mountRef.current.clientWidth / mountRef.current.clientHeight, 0.1, 10000);
     camera.position.set(20, -40, 20);
@@ -256,6 +371,7 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
   useEffect(() => { splaysGroup.current.visible = splaysVisible; }, [splaysVisible]);
   useEffect(() => { stationsGroup.current.visible = stationsVisible; }, [stationsVisible]);
   useEffect(() => { labelsGroup.current.visible = labelsVisible; }, [labelsVisible]);
+  useEffect(() => { wallsGroup.current.visible = wallsVisible; }, [wallsVisible]);
 
   useEffect(() => {
     if (boxHelperRef.current) {
@@ -275,7 +391,7 @@ export const ThreeView = forwardRef<ThreeViewHandle, ThreeViewProps>(({
     if (loxDataRef.current) {
        buildScene(loxDataRef.current);
     }
-  }, [altitudeColor, centerlineWidth, splayWidth]);
+  }, [altitudeColor, centerlineWidth, splayWidth, fontSize]);
 
   return <div ref={mountRef} style={{ width: '100%', height: '100%' }} />;
 });
